@@ -1,0 +1,108 @@
+#include <Arduino.h>
+#include <Adafruit_NeoPixel.h>
+
+constexpr uint8_t LED_PIN = 10;     // WS2812B data pin
+constexpr uint16_t LED_COUNT = 1;
+constexpr uint8_t LED_BRIGHTNESS = 32;
+
+constexpr uint8_t MUX_SIG_PIN = 1;  // GPIO1 -> CD74HC4067 common output (to ADC)
+constexpr uint8_t MUX_S0 = 2;       // GPIO2 -> S0
+constexpr uint8_t MUX_S1 = 3;       // GPIO3 -> S1
+constexpr uint8_t MUX_S2 = 4;       // GPIO4 -> S2
+constexpr uint8_t MUX_S3 = 5;       // GPIO5 -> S3
+
+constexpr uint8_t SENSOR_COUNT = 14; // We only use channels 0..13
+constexpr uint16_t BLACK_THRESHOLD = 1200; // Values above this mean line detected
+constexpr uint16_t SENSOR_SPACING = 1000;  // Sensor i position = i * 1000
+
+Adafruit_NeoPixel strip(LED_COUNT, LED_PIN, NEO_GRB + NEO_KHZ800);
+
+void selectChannel(uint8_t channel) {
+  // Set address bits for the CD74HC4067 (lowest bit on S0)
+  digitalWrite(MUX_S0, channel & 0x01);
+  digitalWrite(MUX_S1, (channel >> 1) & 0x01);
+  digitalWrite(MUX_S2, (channel >> 2) & 0x01);
+  digitalWrite(MUX_S3, (channel >> 3) & 0x01);
+}
+
+uint16_t readSensor(uint8_t channel) {
+  selectChannel(channel);
+  delayMicroseconds(5); // Small settle time after switching the mux
+  return analogRead(MUX_SIG_PIN);
+}
+
+void setup() {
+  Serial.begin(115200);
+
+  strip.begin();
+  strip.setBrightness(LED_BRIGHTNESS);
+  strip.clear();
+  strip.show();
+
+  pinMode(MUX_SIG_PIN, INPUT);
+  pinMode(MUX_S0, OUTPUT);
+  pinMode(MUX_S1, OUTPUT);
+  pinMode(MUX_S2, OUTPUT);
+  pinMode(MUX_S3, OUTPUT);
+
+  analogReadResolution(12);          // ESP32-S3 supports 12-bit ADC (0..4095)
+  analogSetAttenuation(ADC_11db);    // For ~0-3.3V input range
+
+  // Clear select lines
+  digitalWrite(MUX_S0, LOW);
+  digitalWrite(MUX_S1, LOW);
+  digitalWrite(MUX_S2, LOW);
+  digitalWrite(MUX_S3, LOW);
+
+  Serial.println("CD74HC4067 analog scan start");
+}
+
+void loop() {
+  Serial.print("ms=");
+  Serial.print(millis());
+  Serial.print(" readings:");
+
+  uint32_t weightedSum = 0;
+  uint16_t activeCount = 0;
+
+  for (uint8_t ch = 0; ch < SENSOR_COUNT; ++ch) {
+    uint16_t value = readSensor(ch);
+    Serial.print(' ');
+    Serial.print(ch+1);
+    Serial.print('=');
+    Serial.print(value);
+
+    if (value > BLACK_THRESHOLD) {
+      weightedSum += static_cast<uint32_t>(ch) * SENSOR_SPACING;
+      ++activeCount;
+    }
+  }
+
+  //Serial.print(" active=");
+  //Serial.print(activeCount);
+
+  if (activeCount > 0) {
+    float position = static_cast<float>(weightedSum) / static_cast<float>(activeCount);
+    Serial.print(" pos=");
+    Serial.print(position, 2); // position in units of spacing
+
+    // Map position: edges (0 / 13000) = red, center (~6500) = green.
+    const float centerPos = 6500.0f;
+    const float halfSpan = centerPos; // 0..6500 to center, symmetric.
+    float offset = fabsf(position - centerPos) / halfSpan; // 0 at center, 1 at edges
+    if (offset > 1.0f) offset = 1.0f;
+
+    uint8_t red = static_cast<uint8_t>(255.0f * offset);
+    uint8_t green = static_cast<uint8_t>(255.0f * (1.0f - offset));
+    uint32_t color = strip.Color(red, green, 0);
+    strip.setPixelColor(0, color);
+    strip.show();
+  } else {
+    Serial.print(" pos=nan");
+    strip.clear();
+    strip.show();
+  }
+
+  Serial.println();
+  delay(100); // Adjust refresh rate as needed
+}

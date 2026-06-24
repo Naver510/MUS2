@@ -1,0 +1,2442 @@
+POLITECHNIKA WROCAWSKA
+WYDZIA ELEKTRONIKI
+Kierunek:
+Specjalno±¢:
+
+Automatyka i Robotyka (AIR)
+Robotyka (ARR)
+
+PRACA DYPLOMOWA
+MAGISTERSKA
+Optymalizacja toru ruchu robota klasy
+linefollower
+Path optimization for linefollower robots
+Autor:
+
+Rafaª Cymi«ski
+
+Prowadz¡cy prac¦:
+
+Dr in». Robert Muszy«ski
+
+Ocena pracy:
+
+WROCAW 2018
+
+Spis tre±ci
+1 Wst¦p
+
+3
+
+2 Robot klasy linefollower
+
+9
+
+3 Reprezentacja trasy
+
+17
+
+4 Budowa mapy trasy
+
+21
+
+5 Algorytmy wyznaczania optymalnej ±cie»ki
+
+29
+
+6 Algorytmy sterowania robotem
+
+35
+
+7 Symulacje i eksperymenty
+
+37
+
+8 Podsumowanie
+
+47
+
+Bibliograa
+
+49
+
+2.1
+2.2
+2.3
+3.1
+3.2
+4.1
+4.2
+4.3
+5.1
+5.2
+5.3
+6.1
+6.2
+7.1
+7.2
+7.3
+
+Konstrukcja robota . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 9
+Model kinematyki robota . . . . . . . . . . . . . . . . . . . . . . . . . . . . 12
+Wyznaczanie poªo»enia i orientacji robota . . . . . . . . . . . . . . . . . . 14
+Uszeregowany zbiór punktów . . . . . . . . . . . . . . . . . . . . . . . . . . 17
+Krzywizna trasy w funkcji odlegªo±ci . . . . . . . . . . . . . . . . . . . . . 17
+Mapowanie . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 21
+Interpolacja liniowa . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 24
+Dopuszczalny tor ruchu . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 26
+
+Parametryzacja punktów . . . . . . . . . . . . . . . . . . . . . . . . . . . . 29
+Najkrótsza ±cie»ka . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 30
+cie»ka o minimalnej krzywi¹nie . . . . . . . . . . . . . . . . . . . . . . . . 32
+Wyznaczanie trajektorii robota . . . . . . . . . . . . . . . . . . . . . . . . 35
+Algorytm ±ledzenia trajektorii . . . . . . . . . . . . . . . . . . . . . . . . . 36
+Warunki poprawnego uko«czenia przejazdu . . . . . . . . . . . . . . . . . . 37
+Symulacje przejazdów . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 38
+Przejazd wªa±ciwy . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 42
+
+Rozdziaª 1
+Wst¦p
+Robot klasy linefollower to konstrukcja autonomiczna, której zadaniem jest pokonanie
+trasy wyznaczonej przy pomocy czarnej linii na kontrastuj¡cym podªo»u. Zasady rozgrywania konkurencji oraz specykacja trasy i robota ±ci±le okre±la regulamin zawodów [1, 2].
+Obrys robota musi mie±ci¢ si¦ na kartce papieru formatu A4. Waga i wysoko±¢ jest nieograniczona. Komunikacja z robotem w czasie rozgrywki jest zabroniona z wyj¡tkiem zdalnego
+uruchomienia i zatrzymania robota. Linia wyznaczaj¡ca tras¦ ma szeroko±¢ od 15 do 20
+mm. Tor mo»e posiada¢ zakr¦ty o k¡cie mniejszym b¡d¹ równym k¡towi prostemu oraz
+linie krzy»uj¡ce si¦ pod k¡tem prostym. Na skrzy»owaniu robot powinien wybra¢ drog¦ na
+wprost. Dwie s¡siaduj¡ce ze sob¡ linie nie powinny przebiega¢ bli»ej ni» 150 mm od siebie.
+Zasadniczo zabronione jest opuszczanie toru oraz skracanie, omijanie jej fragmentów. Do
+opuszczenia trasy dochodzi, gdy robot swoim obrysem nie pokrywa linii wyznaczaj¡cej
+tor jazdy. Regulamin mo»e zezwala¢ na opuszczenie trasy pod warunkiem powrotu na ni¡
+w miejscu opuszczenia lub punkcie poprzedzaj¡cym to miejsce.
+Klasyczny robot startuj¡cy w konkurencji linefollower to platforma mobilna klasy
+(2,0). Posiada dwa koªa z nap¦dem ró»nicowym stanowi¡ce dwa punkty podparcia. Robot
+klasy (2,0) charakteryzuje si¦ du»¡ zwrotno±ci¡  potra wykona¢ obrót w miejscu, dlatego sterowanie tak¡ platform¡ jest znacznie prostsze ni» robotami innych klas. Zazwyczaj
+jest to konstrukcja moduªowa skªadaj¡ca si¦ z moduªu gªównego oraz moduªu czujników
+linii. Takie rozwi¡zanie pozwala na regulacj¦ wysuni¦cia czujników i dostosowanie robota do poziomu trudno±ci trasy. Dla zapewnienia stabilno±ci potrzebny jest trzeci punkt
+podparcia. Najcz¦±ciej stanowi go moduª czujników linii.
+Moduª gªówny zawiera kluczowe elementy robota potrzebne do jego dziaªania, czyli
+nap¦d (silniki i koªa), ukªad zasilaj¡cy (akumulator, stabilizatory napi¦cia i wª¡cznik
+zasilania) i steruj¡cy (mikrokontroler, sterowniki silników, enkodery).
+Istotnym aspektem, który ma wpªyw na osi¡gane rezultaty, jest przyczepno±¢ kóª.
+Od niej zale»y maksymalna pr¦dko±¢ przejazdu, która jest zwykle dostosowywana do
+najtrudniejszego fragmentu trasy. Przy zaªo»eniu staªej pr¦dko±ci post¦powej robota, siªa
+od±rodkowa dziaªaj¡ca na konstrukcj¦ ro±nie wraz ze wzrostem krzywizny zakr¦tu. Je±li
+ta siªa jest zbyt du»a dochodzi do utraty przyczepno±ci kóª a w konsekwencji nawet
+do wypadni¦cia z trasy. Jednak»e, ryzyko przejazdu z coraz wi¦ksz¡ pr¦dko±ci¡, które
+podejmuj¡ zawodnicy mo»e przynie±¢ wymierny efekt w postaci poprawy rezultatu.
+Cz¦stokro¢ konstruktorzy montuj¡ dodatkowo w module gªównym nap¦d tunelowy popularnie nazywan¡ turbin¡1 , czyli wysokoobrotowy silnik elektryczny z przymocowanymi
+do wirnika ªopatkami. Zwi¦ksza on docisk robota do podªo»a siª¡ odrzutu powietrza i skut1 Nazwa jest bª¦dna, gdy» turbina jest urz¡dzeniem generuj¡cym energi¦. Z kolei nap¦d tunelowy
+zu»ywa energi¦ elektryczn¡ do wprawienia wirnika w ruch.
+
+4
+
+1.
+
+Wst¦p
+
+kuje popraw¡ przyczepno±ci. W efekcie robot  w porównaniu do konstrukcji pozbawionej
+nap¦du tunelowego  potra przyspieszy¢ do pr¦dko±ci maksymalnej oraz wyhamowa¢ na
+znacznie krótszym odcinku, a tak»e mo»e szybciej pokonywa¢ zakr¦ty. Zysk wynikaj¡cy
+z zastosowania go jest na tyle du»y, »e organizatorzy zawodów zazwyczaj decyduj¡ si¦
+na podziaª konkurencji linefollower na roboty wyposa»one w nap¦d tunelowy (konkurencja Linefollower Turbo) oraz nie posiadaj¡ce go (Linefollower Standard lub Linefollower
+Light).
+Kolejnym ulepszeniem jest wyposa»enie robota w enkodery. Najcz¦±ciej s¡ wykorzystywane enkodery magnetyczne, informuj¡ce o obrocie magnesu zamocowanego na kole
+lub wale silnika. Przy zastosowaniu du»ej cz¦stotliwo±ci próbkowania warto±¢ k¡ta obrotu
+mo»e posªu»y¢ do wyznaczenia chwilowej pr¦dko±ci koªa, niezb¦dnej w nawigacji zliczeniowej. Obecnie enkodery wykorzystuje si¦ w p¦tli regulacji do sterowania rzeczywist¡
+pr¦dko±ci¡ kóª robota, co przekªada si¦ na minimalizacj¦ po±lizgów oraz precyzyjn¡ jazd¦
+po linii. Takie sterowanie jest odporne na zmian¦ zasilania w trakcie przejazdu, która
+wynika z rozªadowywania akumulatora i objawia si¦ spadkiem napi¦cia.
+Zmian¦ poªo»enia robota mo»na wyznaczy¢ stosuj¡c nawigacj¦ zliczeniow¡. Metoda ta
+polega na ustaleniu przemieszczenia na podstawie translacji i rotacji wyliczanej z aktualnej
+pr¦dko±ci obu kóª.
+W module czujników do wykrywania linii zwykle stosuje si¦ od 8 do 16 czujników.
+Wi¦ksza liczba sensorów pozwala na szerszy przegl¡d otoczenia robota oraz bardziej precyzyjne oszacowanie poªo»enia wzgl¦dem linii, jednak»e wymaga wi¦kszych zasobów sprz¦towych do ich obsªugi.
+O sukcesie i jako±ci robota decyduje jego mechanika i zastosowane algorytmy sterowania. Obecnie wiele robotów klasy linefollower charakteryzuje si¦ niemal identycznymi
+rozwi¡zaniami konstrukcyjnymi, które zostaªy wypracowane na przestrzeni lat, co ±wiadczy o wysokim poziomie mechaniki. Niestety w wi¦kszo±ci z nich stosowane s¡ proste
+algorytmy sterowania, koryguj¡ce poªo»enie robota wzgl¦dem linii jedynie na bazie aktualnej informacji pochodz¡cej z czujników linii. Takie podej±cie wymaga potraktowania
+maksymalnej pr¦dko±ci jazdy robota jako parametru zadawanego a priori o warto±ci dobieranej przed przejazdem tak, by robot byª w stanie przejecha¢ najcia±niejszy fragment
+trasy. To rozwi¡zanie jest nieefektywne, gdy» nie pozwala wykorzysta¢ peªnych mo»liwo±ci robota  potrzebny jest przynajmniej moduª, który pozwoliªby dostosowa¢ pr¦dko±¢
+przed zbli»aj¡cym si¦ zakr¦tem i zapewniª utrzymanie robota na trasie.
+W pracy [7] zaproponowano algorytm, który w ramach przejazdu testowego sporz¡dza map¦. Nast¦pnie wylicza on krzywizn¦ trasy i na jej podstawie dynamicznie oblicza
+maksymaln¡ pr¦dko±¢, z jak¡ mo»e porusza¢ si¦ robot na danym odcinku, która zapewnia
+utrzymanie si¦ na torze. Algorytm efektywnie wykorzystuje dªugie proste zwi¦kszaj¡c na
+nich pr¦dko±¢ maksymaln¡ oraz zmniejsza pr¦dko±¢ przed ostrymi zakr¦tami, przez co
+sumarycznie uzyskuje lepsze czasy przejazdu.
+Dalsz¡ popraw¦ rezultatów mo»na uzyska¢ optymalizuj¡c ksztaªt rzeczywistego toru
+przejazdu tak, by nie zjecha¢ z linii a równocze±nie skróci¢ jego dªugo±¢ czy zmniejszy¢
+krzywizn¦. Optymalna ±cie»ka deniuje trajektori¦, po której nale»y porusza¢ si¦, aby
+uzyska¢ najlepszy mo»liwy czas okr¡»enia dla danej trasy i pojazdu. Zale»y on od kilku
+czynników, takich jak ksztaªt toru, moc silników czy przyczepno±¢ kóª. Algorytmy poszukiwania optymalnej ±cie»ki s¡ stosowane w sportach motorowych [3], jak równie» w grach
+i symulatorach wy±cigowych. Popularnym ±rodowiskiem symulacyjnym jest TORCS  The
+Open Racing Car Simulator [4], oferuj¡cy trójwymiarowe symulacje wy±cigów samochodowych, wykorzystywany przez naukowców do bada« i testowania algorytmów sterowania
+i optymalizacji toru ruchu. Przykªad bada« przy u»yciu symulatora TORCS zaprezento-
+
+5
+
+wano w pracy [5].
+Reasumuj¡c, by efektywnie sterowa¢ robotem klasy linefollower w celu przejechania
+trasy nale»y:
+
+• w ramach przejazdu testowego sporz¡dzi¢ map¦ trasy,
+• zoptymalizowa¢ ksztaªt trasy z uwzgl¦dnieniem wªasno±ci dynamicznych robota,
+• zaprojektowa¢ prol pr¦dko±ci przejazdu trasy uzyskuj¡c po»¡dan¡ trajektori¦ ruchu
+robota,
+• zrealizowa¢ wªa±ciwy przejazd wedªug zaprojektowanej trajektorii po»¡danej ze sprz¦»eniem zwrotnym od czujników linii.
+W przypadku robota klasy (2,0) wyposa»onego w enkodery oraz moduª do nawigacji inercyjnej IMU opisane powy»ej etapy mog¡ zosta¢ zrealizowane w nast¦puj¡cy sposób.
+W trakcie przejazdu testowego z zadan¡ pr¦dko±ci¡ post¦pow¡, robot pod¡»a za lini¡ deniuj¡c¡ trajektori¦. Dane uzyskane w trakcie przejazdu s¡ przetwarzane na map¦ trasy.
+Diagram funkcyjny procesu mapowania pokazano na rysunku 1.1. Optymalizacja ksztaªtu trasy dokonywana jest zgodnie z wybranym algorytmem. Rezultatem jest optymalna
+±cie»ka, która przeksztaªcana jest w trajektori¦ na podstawie zaprojektowanego prolu
+pr¦dko±ci przejazdu wªa±ciwego. Na rysunku 1.2 zaprezentowano diagram funkcyjny optymalizacji. Przejazd wªa±ciwy polega na ±ledzeniu otrzymanej w opisany sposób trajektorii.
+Do korekty poªo»enia i pr¦dko±ci robota zastosowano sterownik kinematyczny. Diagram
+funkcyjny dla tego etapu pokazano na rysunku 1.3. Zarówno w trakcie przejazdu testowego jak i wªa±ciwego u»ywany jest ukªad pomiarowy do wyznaczania przemieszczenia
+i orientacji robota, oraz sterownik pr¦dko±ci kóª opisane w podrozdziaªach 2.1 i 2.3.
+Celem pracy jest przegl¡d literatury i wybór algorytmów optymalizacji toru ruchu,
+które mo»na zastosowa¢ w robotach klasy linefollower. Zadania do wykonania to:
+
+• przygotowanie ±rodowiska badania wªasno±ci algorytmów,
+• implementacja wskazanych algorytmów,
+• porównanie wªasno±ci zaimplementowanych algorytmów.
+Ukªad pracy jest nast¦puj¡cy. W rozdziale 2 zaprezentowano robota klasy linefollower,
+którego wykorzystano do przeprowadzenia eksperymentów. Rozdziaª 3 zawiera opis metod
+reprezentacji trasy. Rozdziaª 4 po±wi¦cono mapowaniu i przygotowaniu mapy trasy do procesu optymalizacji. W rozdziale 5 omówiono algorytmy wyznaczania optymalnej ±cie»ki.
+Rozdziaª 6 traktuje o algorytmach sterowania robotem dla zadania przejazdu testowego,
+w którym wykonywane jest mapowanie, oraz przejazdu wªa±ciwego po optymalnej trajektorii. W rozdziale 7 przedstawiono wyniki przeprowadzonych symulacji i eksperymentów.
+Rozdziaª 8 podsumowuje wykonan¡ prac¦ i uzyskane rezultaty oraz zawiera propozycje
+dalszego post¦powania.
+
+prędkość
+zadana
+
+Estymacja
+położenia względem
+linii
+uchyb
+Regulator PD
+
+Regulator położenia względem linii
+
+Przejazd testowy
+
+Mapowanie
+
+korekcja
+
++
+
+-
+
++
+
++
+
+prędkość zadana
+prawego silnika
+
+prędkość zadana
+lewego silnika
+
+Układ pomiarowy
+przemieszczenia
+i orientacji robota
+
+Sterownik prędkości
+silników
+
+orientacja
+robota
+
+przemieszczenie
+prawego koła
+
+przemieszczenie
+lewego koła
+
+uchyb położenia
+względem linii
+
+Moduł budowy
+mapy trasy
+
+mapa
+trasy
+
+6
+1.
+
+Rysunek 1.1: Diagram funkcyjny procesu mapowania
+
+Wst¦p
+
+7
+
+Optymalizacja trasy i wyznaczenie trajektorii przejazdu
+mapa
+trasy
+
+Wyznaczanie
+optymalnej
+ścieżki przejazdu
+
+ścieżka
+
+Wyznaczanie
+trajektorii
+zadana
+prędkość
+przejazdu
+
+Rysunek 1.2: Diagram funkcyjny procesu optymalizacji
+
+trajektoria
+
+trajektoria
+
+Układ pomiarowy
+przemieszczenia
+i orientacji robota
+
+Przejazd właściwy
+
+orientacja
+robota
+
+przemieszczenie
+prawego koła
+
+przemieszczenie
+lewego koła
+Estymacja
+położenia
+robota
+
+położenie
+robota
+
+Sterownik kinematyczny
+prędkość zadana
+prawego silnika
+
+prędkość zadana
+lewego silnika
+
+Sterownik prędkości
+silników
+
+8
+1.
+
+Rysunek 1.3: Diagram funkcyjny wªa±ciwego przejazdu
+
+Wst¦p
+
+Rozdziaª 2
+Robot klasy linefollower
+Jak wspomniano we wst¦pie, najpopularniejszym rozwi¡zaniem konstrukcyjnym stosowanym przez zawodników startuj¡cych w konkurencji linefollower jest wyposa»enie robota
+w dwa silniki o nap¦dzie ró»nicowym. Tak¡ konstrukcj¦ zalicza si¦ do klasy (2,0) robotów
+mobilnych. Identyczne rozwi¡zanie zastosowano w robocie do bada« w ramach tej pracy
+(zobacz rysunek 2.1). Poni»ej opisano kolejno konstrukcj¦ robota, jego kinematyk¦ oraz
+sposób wyznaczania poªo»enia i orientacji robota.
+
+2.1
+
+Konstrukcja robota
+
+Konstrukcja skªada si¦ z dwóch moduªów  moduªu gªównego i moduªu czujników poª¡czonych listwami w¦glowymi zapewniaj¡cymi sztywne ª¡czenie mechaniczne oraz ta±m¡ FFC,
+stanowi¡c¡ poª¡czenie elektryczne. Zewn¦trzne wymiary robota to szeroko±¢ L = 16 cm
+i 24 cm dªugo±ci mieszcz¡ce si¦ w dopuszczalnych wymiarach kartki formatu A4, czyli
+21 cm na 29.7 cm. Moduª czujników jest wysuni¦ty do przodu na odlegªo±¢ l = 215mm
+wzgl¦dem ±rodka osi robota. Podstawowe wymiary zaprezentowano na rysunku 2.2. Zasilanie stanowi¡ 3-celowe pakiety akumulatorów litowo-polimerowych o napi¦ciu nominalnym
+11.1V i pojemno±ci 450mAh, co pozwala na okoªo minut¦ ci¡gªej jazdy. Sumaryczna waga
+robota to 140 gramów.
+Moduª gªówny zawiera 32-bitowy mikrokontroler STM32F103RCT6 [8] z rdzeniem
+Cortex-M3, 256 kB pami¦ci Flash oraz 48 kB pami¦ci RAM i maksymalnym taktowaniem
+72 MHz. Komunikacja z komputerem odbywa si¦ przez interfejs dwukierunkowej komunikacji szeregowej UART oraz moduª Bluetooth HC-06 [9] z nast¦puj¡cymi ustawieniami:
+
+• pr¦dko±¢ transmisji  115,2 kbps,
+• 8 bitów danych,
+• 1 bit stopu,
+• brak bitu parzysto±ci.
+Przetwornik analogowo-cyfrowy (ADC) sªu»y do pomiaru napi¦cia na kolektorach fototranzystorów czujników linii oraz poziomu naªadowania akumulatora. Moduª DMA zapewnia bezpo±redni zapis do pami¦ci mikrokontrolera, dzi¦ki czemu procesor nie oczekuje
+na zako«czenie pomiarów przetwornika. Ka»demu czujnikowi linii odpowiadaj¡ diody LED
+sygnalizuj¡ce widoczno±¢ linii. Pozwalaj¡ one tak»e na wykrycie awarii czujników.
+
+10
+
+2.
+
+Robot klasy linefollower
+
+Rysunek 2.1: Robot linefollower wykorzystywany do bada«
+
+l
+
+L
+
+Rysunek 2.2: Podstawowe wymiary robota
+
+2.1.
+
+Konstrukcja robota
+
+11
+
+Sterownik prędkości silników
+prędkość zadana
+lewego silnika
+
+uchyb prędkości
+lewego silnika
+
++
+
+Regulator PI
+
+sterowanie
+
+Lewy Silnik
+
+prędkość
+
+-
+
+prędkość zadana
+prawego silnika
+
+uchyb prędkości
+prawego silnika
+
++
+
+Regulator PI
+
+sterowanie
+
+Prawy Silnik
+
+prędkość
+
+-
+
+Rysunek 2.3: Sterownik pr¦dko±ci silników
+Nap¦d stanowi¡ dwa silniki Pololu High Power z przekªadni¡ 10:1 oraz przedªu»onym
+waªem [10]. Maksymalna pr¦dko±¢ silnika wedªug noty katalogowej to 3000 obrotów na minut¦ za przekªadni¡, co w poª¡czeniu z koªami o ±rednicy φ = 23 mm oznacza teoretyczn¡
+maksymaln¡ pr¦dko±¢ robota na poziomie 3, 6 ms . Robot wyposa»ony jest w opony Mini-Z
+o szeroko±ci 9 mm, które s¡ stosowane w wy±cigach pojazdów zdalnie sterowanych, gdy»
+charakteryzuj¡ si¦ du»¡ przyczepno±ci¡ i trwaªo±ci¡.
+Przedªu»one waªy silników u»yto do zamocowania magnesów wymaganych do pracy
+enkoderów, które sªu»¡ do pomiaru pr¦dko±ci obrotowej kóª. Zastosowany w konstrukcji enkoder magnetyczny AS5040 [11] rmy AMS charakteryzuje si¦ rozdzielczo±ci¡ 512
+impulsów na peªen obrót waªu silnika. Przy zastosowanej przekªadni silnika uzyskuje si¦
+5120 impulsów na obrót koªa, co daje rozdzielczo±¢ okoªo 14 µm na impuls. Odczyt z enkoderów odbywa si¦ poprzez wyj±cia kwadraturowe. Konwersj¦ impulsów dimp na dystans
+pokonany przez koªo w milimetrach dmm dokonujemy wedªug zale»no±ci
+
+dimp
+· π · φ[mm],
+(2.1)
+n
+gdzie n to liczba impulsów na peªen obrót koªa a φ[mm] ±rednica koªa podana w milimetrach. Po podstawieniu warto±ci dla prezentowanej konstrukcji uzyskujemy:
+dmm [mm] =
+
+dmm =
+
+dimp
+· π · 23[mm] ≈ 0, 0141 · dimp [mm]
+5120
+
+(2.2)
+
+Enkodery s¡ wykorzystywane przez niskopoziomowy sterownik pr¦dko±ci silników przedstawiony na rysunku 2.3. Jego zadaniem jest utrzymanie zadanych pr¦dko±ci przy pomocy
+regulatora proporcjonalno-caªkuj¡cego.
+Kluczowym elementem konstrukcji zwi¦kszaj¡cym docisk do podªo»a i minimalizuj¡cym po±lizgi jest nap¦d tunelowy. Skªada si¦ on z:
+
+• wysokoobrotowego silnika bezszczotkowego (BLDC) o parametrze 7000KV1 . Przykªadowo, dla napi¦cia 12 V oznacza to ponad 80 000 rpm,
+• tunelu, w ksztaªcie walca, umo»liwiaj¡cego równomierny ruch powietrza,
+• wirnika wyposa»onego w 6 ªopatek generuj¡cych ruch powietrza.
+1 Jednostka KV oznacza liczb¦ obrotów na minut¦ (rpm) na ka»dy wolt napi¦cia zasilaj¡cego
+
+12
+
+2.
+
+Robot klasy linefollower
+
+Rysunek 2.4: Zasada dziaªania nap¦du tunelowego
+Ide¦ dziaªania nap¦du tunelowego przedstawia rysunek 2.4. Ruch obrotowy wirnika powoduje zasysanie powietrza spod robota (kolor niebieski), przepªyw tunelem (kolor »óªty)
+i wyrzut powietrza z du»¡ pr¦dko±ci¡ nad robotem (kolor zielony). Wytworzona w ten
+sposób ró»nica ci±nie« skutkuje siª¡ dociskow¡ (kolor czerwony) w kierunku podªo»a dziaªaj¡c¡ na robota od góry.
+Robot jest wyposa»ony w moduª IMU2 MPU-6050 [12] rmy InvenSense, który jest
+powszechnie u»ywany w stabilizacji dronów i samolotów RC. Posiada on 3-osiowy akcelerometr do pomiaru przyspiesze«, 3-osiowy »yroskop do pomiaru pr¦dko±ci k¡towych oraz
+cyfrowy termometr do kompensacji pomiarów. W pracy korzystano z maksymalnych zakresów pomiarowych, które wynosz¡ ±16g dla akcelerometru i ±2000◦ /s dla »yroskopu.
+Ukªad posiada wyprowadzenia umo»liwiaj¡ce podª¡czenie zewn¦trznego magnetometru.
+Komunikacja z mikrokontrolerem odbywa si¦ po magistrali I 2 C w trybie Fast Mode z pr¦dko±ci¡ 400 kbps z podª¡czonym dodatkowym wyprowadzeniem generuj¡cym przerwanie,
+gdy nowy pomiar jest gotowy do odczytu.
+Moduª czujników skªada si¦ z 14 transoptorów odbiciowych KTIR0711s [13] do detekcji
+linii na kontrastuj¡cym podªo»u. Ka»dy z transoptorów jest zbudowany z diody emituj¡cej ±wiatªo podczerwone, które jest wychwytywane przez umieszczony w nim odbiornik
+w postaci fototranzystora. Napi¦cie mierzone na kolektorze tranzystora jest odwrotnie
+proporcjonalne do ilo±ci ±wiatªa odbitego od podªo»a, a zatem, z faktu du»ej absorpcji
+±wiatªa dla ciemniejszych powierzchni warto±¢ napi¦cia na kolektorze dla czarnej linii jest
+wysoka a dla biaªego podªo»a niska. W procesie kalibracji czujnika dobierana jest warto±¢
+progowa, powy»ej której przyjmuje si¦, »e pod czujnikiem znajduje si¦ czarna linia.
+
+2.2
+
+Model kinematyki robota
+
+Model kinematyki robota mobilnego klasy (2,0) w postaci ogólnej opisany jest wzorem
+[14]
+cos θ
+ẋr
+ 
+ sin2 θ
+q̇r =  ẏr  =  2
+− L1
+θ̇r
+
+
+
+2 ang. Inertial Measurement Unit
+
+
+
+
+
+cos θ
+2
+sin θ 
+2 
+1
+L
+
+
+
+!
+
+ηL
+,
+ηR
+
+(2.3)
+
+2.2.
+
+Model kinematyki robota
+
+13
+
+ηR
+
+vr
+
+ω
+
+ηL
+
+ω
+R
+O
+L
+
+d
+
+Rysunek 2.5: Geometryczna prezentacja ruchu robota
+gdzie qr to wektor zmiennych stanu robota, ηL i ηR oznaczaj¡ odpowiednio pr¦dko±¢
+post¦pow¡ lewego i prawego koªa a L szeroko±¢ robota (rozstaw kóª).
+Analizuj¡c zale»no±ci geometryczne pomi¦dzy pr¦dko±ciami poszczególnych elementów
+robota (zobacz rysunek 2.5) uzyskujemy wyra»enie na pr¦dko±¢ post¦pow¡ ±rodka osi
+robota
+ηL + ηR
+(2.4)
+vr =
+2
+oraz pr¦dko±¢ k¡tow¡ robota
+ηL
+ω= .
+(2.5)
+d
+Warto±¢ d mo»emy wyliczy¢ na podstawie twierdzenia o podobie«stwie trójk¡tów, które
+okre±la relacj¦
+d
+ηL
+=
+(2.6)
+d+L
+ηR
+co daje
+ηL L
+d=
+(2.7)
+ηR − ηL
+i ostatecznie po podstawieniu do (2.5)
+
+ω=
+
+ηR − ηL
+.
+L
+
+(2.8)
+
+Caªkuj¡c warto±ci uzyskanych w ten sposób pr¦dko±ci dostajemy wyra»enie na translacj¦
+T oraz rotacj¦ R w chwili t w postaci
+
+T (t) =
+
+Z t
+0
+
+R(t) =
+
+Z t
+0
+
+vr dt =
+
+ωdt =
+
+Z t
+
+ηL + ηR
+dt,
+2
+0
+
+(2.9)
+
+ηR − ηL
+dt.
+L
+0
+
+(2.10)
+
+Z t
+
+14
+
+2.
+
+Robot klasy linefollower
+
+Przeksztaªcaj¡c niniejsze zale»no±ci do postaci dyskretnej, co jest wymagane do cyfrowej
+implementacji algorytmu, otrzymujemy wyra»enia
+
+Ti =
+
+dL,i + dR,i
+,
+2
+
+(2.11)
+
+dR,i − dL,i
+,
+(2.12)
+L
+gdzie Ti , Ri to warto±ci translacji i rotacji a dL,i , dR,i to dystans pokonany przez odpowiednio lewe i prawe koªo w i-tej iteracji. Kinematyka robota w postaci dyskretnej opisana
+jest równaniem
+
+
+
+
+xr,i
+xr,i−1 + Ti · cos θr,i
+
+
+
+(2.13)
+qr,i =  yr,i 
+ =  yr,i−1 + Ti · sin θr,i  ,
+θr,i
+θr,i−1 + Ri
+Ri =
+
+co po uwzgl¦dnieniu zale»no±ci (2.11), (2.12) daje
+cos θr,i
+xr,i
+xr,i−1
+
+
+  sin2θr,i
+qr,i = 
+ yr,i  =  yr,i−1  + 
+2
+θr,i
+θr,i−1
+− L1
+
+
+
+
+
+
+
+
+
+cos θr,i 
+2
+sin θr,i 
+
+2
+1
+L
+
+
+
+!
+
+dL,i
+.
+dR,i
+
+(2.14)
+
+Jako stan pocz¡tkowy ukªadu (2.14) przyjmujemy
+
+
+
+
+ 
+
+0
+xr,0
+ 
+
+
+qr,0 =  yr,0  = 0 .
+0
+θr,0
+
+(2.15)
+
+Wyznaczanie orientacji robota wyª¡cznie na podstawie pr¦dko±ci chwilowej kóª obarczone jest bª¦dem kumuluj¡cym si¦ w czasie, co utrudnia prawidªowe wyznaczenie pozycji
+robota. W podrozdziale 2.3 zostanie omówiony sposób wyznaczania orientacji ukªadu
+IMU, któr¡ wykorzystano wprost do ustalenia orientacji robota θr,i , natomiast dystans
+pokonany przez lewe i prawe koªo w i-tej iteracji posªu»y do wyznaczenia pozycji. Tak
+sformuªowane zasady daj¡ opis kinematyki robota w postaci dyskretnej
+cos θr,i
+xr,i
+xr,i−1
+
+
+
+  sin2θr,i
+qr,i =  yr,i  =  yr,i−1  +  2
+θr,i
+0
+0
+
+
+
+
+
+
+
+
+
+
+
+cos θr,i
+2
+sin θr,i
+2
+
+0
+
+
+
+
+
+0 dL,i
+
+
+0 dR,i  ,
+θr,i
+1
+
+(2.16)
+
+gdzie θr,i oznacza orientacj¦ uzyskan¡ z moduªu IMU.
+Poªo»enie ±rodka moduªu czujników Pc,i wyznaczamy na podstawie aktualnej pozycji
+robota, jego orientacji oraz informacji o wysuni¦ciu moduªu czujników wzgl¦dem ±rodka
+osi robota oznaczonej jako odlegªo±¢ l (zobacz rysunek 2.2)
+!
+
+!
+
+x
+x + l · cos θr,i
+Pc,i = c,i = r,i
+.
+yc,i
+yr,i + l · sin θr,i
+2.3
+
+(2.17)
+
+Wyznaczanie poªo»enia i orientacji robota
+
+Zgodnie z równaniem (2.16) do wyznaczenia poªo»enia w i-tym kroku potrzebne s¡ informacje o przemieszczeniu obu kóª oraz estymowana orientacja robota. Dane te zapewnia
+
+2.3.
+
+Wyznaczanie poªo»enia i orientacji robota
+
+15
+
+Układ pomiarowy przemieszczenia
+i orientacji robota
+przemieszczenie lewego koła
+Odometria
+
+IMU
+
+przemieszczenie prawego koła
+
+orientacja robota
+
+Rysunek 2.6: Ukªad pomiarowy przemieszczenia i orientacji robota
+ukªad przedstawiony na rysunku 2.6. System odometrii wykorzystuje enkodery do obliczenia zmiany poªo»enia k¡towego a nast¦pnie na podstawie równania (2.2) przeksztaªca je na dystans, jaki pokonaªo ka»de koªo. Z kolei orientacja wyznaczana jest bezpo±rednio przez moduª IMU. Wybór wymienionego ukªadu pomiaru wªasno±ci inercyjnych
+przedstawiony w podrozdziale 2.1 jest podyktowany wyposa»eniem w jednostk¦ DMP3 ,
+która pozwala na przeliczanie mierzonych danych na orientacj¦ wzgl¦dem orientacji pocz¡tkowej4 . DMP pobiera dane z akcelerometru, »yroskopu i opcjonalnego zewn¦trznego
+magnetometru a nast¦pnie przetwarza je przy pomocy algorytmów, których producent
+nie ujawnia, dostarczaj¡c jako wynik kwaternion. Rezultat mo»na odczyta¢ bezpo±rednio
+z rejestru DMP lub z bufora FIFO ukªadu MPU-6050. Jednostka DMP posiada dost¦p
+do zewn¦trznego wyprowadzenia ukªadu, sªu»¡cego do generowania przerwa«, gdy nowy
+pomiar jest gotowy do odczytu.
+Na etapie testów uzyskana cz¦stotliwo±¢ generowania pomiarów przy u»yciu jednostki
+DMP oscylowaªa wokóª warto±ci 120 Hz. Biblioteka do obsªugi moduªu jest wyposa»ona
+w funkcje przeliczaj¡ce dane z kwaternionów na radiany, co pozwala wprost uzyska¢ informacj¦ o orientacji robota. Po zamontowaniu moduªu dokonano kalibracji czujników na
+pªaskim podªo»u w nieruchomej pozycji.
+
+3 ang. Digital Motion Processor
+
+4 Orientacja pocz¡tkowa jest okre±lana automatyczznie przez DMP po jego wª¡czeniu
+
+Rozdziaª 3
+Reprezentacja trasy
+Sposób reprezentacji trasy powinien by¢ intuicyjny i umo»liwia¢ analiz¦ tak, by potencjalne bª¦dy mo»na byªo ªatwo zdiagnozowa¢ i skorygowa¢. Zagadnienie dotyczy zarówno
+prezentacji mapy wykonanej w trakcie przejazdu próbnego, w którym robot porusza si¦
+z maª¡ pr¦dko±ci¡, w celu dokªadnego odtworzenia trasy, a tak»e dalszych modykacji,
+których celem jest optymalizacja toru wªa±ciwego przejazdu. Tak sformuªowane zadanie
+realizuj¡ dwie podstawowe formy reprezentacji trasy:
+
+• uszeregowany zbiór punktów trasy (xi , yi )T opisanych w kartezja«skim ukªadzie
+wspóªrz¦dnych,
+• krzywizna trasy w funkcji odlegªo±ci K(s).
+Obie metody s¡ równowa»ne, co oznacza, »e przy zastosowaniu transformacji z uwzgl¦dnieniem warunków pocz¡tkowych mo»na uzyska¢ reprezentacj¦ trasy zarówno w postaci
+zbioru punktów (xi , yi )T oraz krzywizny K(s).
+3.1
+
+Uszeregowany zbiór punktów
+
+Zbiór punktów Pi = (xi , yi )T to najprostsza forma reprezentacji przebiegu zdyskretyzowanej trasy. Umo»liwia on ªatwe porównanie z rzeczywist¡ tras¡, wychwycenie bª¦dów
+i korekt¦ algorytmów mapowania oraz prezentacj¦ wygenerowanych rozwi¡za« w procesie
+optymalizacji trajektorii. Jednocze±nie, zawiera peªn¡ informacj¦ o trasie. Mimo to, analiza krzywizny trasy w przedstawionej reprezentacji mo»e by¢ trudna, zwªaszcza dla dªugich
+tras i mapowania z maªymi odst¦pami mi¦dzy kolejnymi punktami. Przykªadow¡ tras¦
+oraz jej posta¢ dyskretn¡ uzyskan¡ w procesie mapowania przedstawiono na rysunkach
+3.1 i 3.2.
+3.2
+
+Krzywizna trasy w funkcji odlegªo±ci
+
+Krzywizna trasy jest kluczowa na etapie optymalizacji trajektorii. Zale»y od niej maksymalna pr¦dko±¢ z jak¡ mo»e porusza¢ si¦ robot w danym fragmencie. Niestety, sama
+krzywizna trasy jako jedyna forma jej reprezentacji jest niewystarczaj¡ca, gdy» stosuj¡c
+j¡, na podstawie wykresów trudno jest oceni¢ poprawno±¢ generowanych rozwi¡za«.
+By wyliczy¢ krzywizn¦ trasy K(s) w funkcji odlegªo±ci nale»y wyznaczy¢ przyrost
+odlegªo±ci s w postaci
+si = si−1 + Ti ,
+(3.1)
+
+18
+
+3.
+
+Rysunek 3.1: Trasa testowa
+
+Rysunek 3.2: Mapa trasy testowej
+
+Reprezentacja trasy
+
+3.2.
+
+Krzywizna trasy w funkcji odlegªo±ci
+
+19
+
+Rysunek 3.3: Krzywizna trasy testowej
+gdzie s0 = 0 i
+
+Ti =
+
+q
+
+dx2i + dyi2
+
+(3.2)
+
+z dxi = xi − xi−1 i dyi = yi − yi−1 , (xi , yi ) b¦d¡cymi skªadowymi punktu Pi , oraz aktualn¡
+orientacj¦ trasy w postaci
+αi = atan2(dyi , dxi ).
+(3.3)
+Funkcja atan2 zwraca warto±¢ k¡ta z przedziaªu [−π, π) mi¦dzy osi¡ X a prost¡ przechodz¡c¡ przez punkt (dxi , dyi ) i pocz¡tek ukªadu wspóªrz¦dnych. Znaki obu argumentów s¡
+wykorzystywane do wyznaczenia ¢wiartki, do której nale»y wynik. Krzywizn¦ okre±la si¦
+jako stosunek zmiany orientacji trasy do przyrostu odlegªo±ci
+
+Ki =
+gdzie
+
+dαi
+,
+Ti
+
+dαi = αi − αi−1 1 .
+
+(3.4)
+
+(3.5)
+
+Przyjmuje si¦, »e dla stanu pocz¡tkowego s0 krzywizna K0 = 0. Rysunek 3.3 przedstawia
+wykres krzywizny w funkcji odlegªo±ci dla trasy testowej z rysunku 3.1.
+
+1 Zmian¦ orientacji okre±la si¦ jako minimaln¡ warto±¢ obrotu jaki nale»y wykona¢, aby z orientacji
+
+αi−1 przej±¢ do αi . Warto±¢ ta nale»y do przedziaªu [−π, π).
+
+Rozdziaª 4
+Budowa mapy trasy
+Proces budowy mapy trasy przebiega w dwóch etapach: mapowania, kiedy to uzyskujemy
+zbiór punktów reprezentuj¡cych tras¦ oraz wst¦pnej obróbki, w którym mapa dostosowywana jest do potrzeb procesu optymalizacji ±cie»ki  zastosowane algorytmy zakªadaj¡
+staªy odst¦p mi¦dzy kolejnymi punktami reprezentuj¡cymi tras¦ oraz wymagaj¡ wyznaczenia referencyjnych punktów kra«cowych ograniczaj¡cych tor ruchu robota.
+4.1
+
+Mapowanie
+
+Mapowanie, czyli wst¦pny przejazd robota celem budowy mapy trasy to pierwszy etap
+zadania optymalizacji ±cie»ki. Na tym etapie kluczowe jest precyzyjne odtworzenie trasy
+z odpowiednio maªymi odst¦pami mi¦dzy kolejnymi próbkami pozycji. W tym celu stosuje
+si¦ maª¡ pr¦dko±¢ przejazdu robota oraz du»¡ cz¦stotliwo±¢ próbkowania. Rysunek 1.1,
+który zaprezentowano w rozdziale 1 przedstawia zaimplementowany algorytm mapowania
+ regulacja PD poªo»enia wzgl¦dem linii z rzeczywist¡ kontrol¡ pr¦dko±ci kóª.
+W p¦tli gªównej programu robota obliczany jest bª¡d poªo»enia moduªu czujników
+wzgl¦dem linii. Informacja ta sªu»y do wyznaczenia korekty pr¦dko±ci na koªa przy u»yciu
+regulatora PD, która minimalizuje uchyb. Regulator dziaªa z cz¦stotliwo±ci¡ 125 Hz, co
+pozwala na szybk¡ reakcj¦ w przypadku zmiany poªo»enia wzgl¦dem linii.
+W przerwaniu zewn¦trznym od moduªu IMU wykonywany jest odczyt orientacji robota. Jak wspomniano w podrozdziale 2.3, jednostka DMP generuje nowe pomiary orientacji
+ze zmienn¡ cz¦stotliwo±ci¡, która na etapie testów wyniosªa okoªo 120 Hz. Warto±¢ ta
+ogranicza maksymaln¡ cz¦stotliwo±¢, z jak¡ robot dokonuje mapowania.
+Przerwanie wewn¦trzne od timera z cz¦stotliwo±ci¡ 1000 Hz synchronizuje caªy proces
+mapowania. Obªuga przerwania skªada si¦ z:
+
+• sterowania rzeczywist¡ pr¦dko±ci¡ kóª  wykorzystuje informacje o zmianie poªo»e« k¡towych kóª wzgl¦dem poprzedniej iteracji, które przyjmuje si¦ jako pr¦dko±ci
+chwilowe silników. Regulator PI koryguje je na podstawie ró»nicy pr¦dko±ci zadanej
+i chwilowej.
+• wysyªania pomiarów  dane przesyªane przez robota w trakcie mapowania to przemieszczenie lewego i prawego koªa (dL,i ,dR,i ), ostatni odczyt orientacji robota θ oraz
+uchybu poªo»enia wzgl¦dem linii u. Przyj¦to, »e dane pomiarowe przesyªane s¡ w co
+dziesi¡tym przerwaniu, co stanowi cz¦stotliwo±¢ transmisji równ¡ 100 Hz. Takie
+rozwi¡zanie zapewnia aktualizacj¦ stanu robota w regularnych odst¦pach czasu.
+Przykªadowe dane zebrane w procesie mapowania zaprezentowano na rysunkach 4.1 i 4.2.
+
+22
+
+4.
+
+Budowa mapy trasy
+
+Rysunek 4.1: Dystans pokonany w i-tej iteracji
+
+Rysunek 4.2: Orientacja robota w i-tej iteracji
+
+4.1.
+
+Mapowanie
+
+23
+
+Rysunek 4.3: cie»ka robota i moduªu czujników
+Stosuj¡c równania (2.16), (2.17) wyznaczono trajektori¦, po której poruszaª si¦ robot, oraz
+trajektori¦ moduªu czujników. Odpowiadaj¡ce im ±cie»ki zaprezentowano na rysunku 4.3.
+Aby wygenerowa¢ map¦ trasy nale»y obliczy¢ przesuni¦cie wzgl¦dem ±rodka osi robota
+w ka»dej iteracji, do czego wykorzystujemy informacj¦ o uchybie poªo»enia wzgl¦dem linii
+ui oraz wysuni¦ciu moduªu czujników l. Przyjmijmy, »e funkcja f wyznacza przesuni¦cie
+podªu»ne ∆xi oraz przesuni¦cie poprzeczne ∆yi od ±rodka osi robota
+!
+
+∆xi
+= f (ui , l).
+∆yi
+
+(4.1)
+
+Przesuni¦cia dla poszczególnych warto±ci uchybu ±ci±le zale»¡ od rozmieszczenia czujników
+linii. Nast¦pnie z równania
+!
+
+x
+x + ∆xi · cos θr,i − ∆yi · sin θr,i
+Pl,i = l,i = r,i
+yl,i
+yr,i + ∆xi · sin θr,i + ∆yi · cos θr,i
+
+!
+
+(4.2)
+
+wyznacza si¦ poªo»enie linii w ukªadzie wspóªrz¦dnych kartezja«skich. Otrzymane punkty
+tworz¡ uszeregowany zbiór reprezentuj¡cy map¦ trasy. Nale»y zaznaczy¢, »e wyznaczenie punktu odpowiadaj¡cego linii trasy nie zawsze jest mo»liwe. Mo»e doj±¢ do sytuacji,
+»e robot swoim obrysem lub moduªem czujników opuszcza tras¦ i »aden z czujników nie
+wykrywa linii. Obserwujemy to zazwyczaj na ostrych zakr¦tach. Map¦ przykªadowej trasy uzyskanej w procesie mapowania przedstawia rysunek 4.4. Widoczne s¡ na nim dwa
+fragmenty przerwy w trasie wynikaj¡ce ze wspomnianego opuszczenia trasy za ciasnymi
+zakr¦tami. Sposób poprawy mapy opisano w podrozdziale 4.2.
+
+24
+
+4.
+
+Budowa mapy trasy
+
+Rysunek 4.4: Uzyskana mapa trasy
+4.2
+
+Interpolacja liniowa
+
+Metod¦ interpolacji liniowej zastosowano do wygenerowania mapy ze staªym krokiem ∆s.
+Przyj¦ta dªugo±¢ kroku ∆s = 50mm redukuje bª¦dy wynikaj¡ce z ograniczonej dokªadno±ci estymacji pozycji linii i objawiaj¡ce si¦ oscylacjami o du»ej cz¦stotliwo±ci na wykresie
+krzywizny w funkcji przebytej drogi. Jednocze±nie, zadany krok nie powoduje nadmiernego znieksztaªcenia trasy, zwªaszcza we fragmentach o du»ej krzywi¹nie. Porównanie mapy
+oraz krzywizny trasy w funkcji przebytej odlegªo±ci przed i po interpolacji przedstawiono
+na rysunkach 4.5 i 4.6.
+Ni»ej zaproponowany algorytm dokonuje interpolacji trasy w n krokach, gdzie n oznacza liczb¦ punktów w uszeregowanym zbiorze (xi , yi ) reprezentuj¡cym tras¦ przed interpolacj¡.
+0. Krok wst¦pny:
+Przyjmij punkt startowy mapy jako pierwszy punkt referencyjny Pref = (xref , yref )
+i ustaw jako pierwszy element zbioru punktów po interpolacji oraz ustaw warto±¢
+licznika i = 2.
+1. Je»eli i > n to STOP.
+2. Je»eli ||Pl,i − Pref || < ∆s to id¹ do kroku 5.
+3. Wyznacz punkt P w odlegªo±ci ∆s od punktu referencyjnego Pref le»¡cego na odcinku ª¡cz¡cym punkty Pref i Pl,i .
+
+4.2.
+
+Interpolacja liniowa
+
+Rysunek 4.5: Mapa trasy przed i po interpolacji
+
+Rysunek 4.6: Krzywizna trasy przed i po interpolacji
+
+25
+
+26
+
+4.
+
+P = Pref +
+
+Pl,i − Pref
+· ∆s
+||(Pl,i − Pref )||
+
+Budowa mapy trasy
+
+(4.3)
+
+4. Dodaj punkt P do zbioru punktów mapy po interpolacji i ustaw jako nowy punkt
+referencyjny Pref = P .
+5. Zwi¦ksz i o 1, id¹ do kroku 1.
+4.3
+
+Dopuszczalny tor ruchu
+
+Jak wspomniano na wst¦pie tego rozdziaªu, aby przejazd byª zaliczony, robot nie mo»e
+opu±ci¢ swoim obrysem »adnego fragmentu trasy. St¡d konieczne jest wyznaczenie lewostronnej xL oraz prawostronnej xR granicy toru ruchu robota, która speªnia niniejsze zaªo»enie. Dla rozpatrywanego zagadnienia szeroko±¢ toru jest staªa i odpowiada szeroko±ci
+robota L (zobacz rysunek 2.2).
+Punkty graniczne s¡ wyznaczane na podstawie aktualnego Pl,i oraz s¡siaduj¡cych
+punktów referencyjnych Pl,i−1 , Pl,i+1 . Idea polega na wyznaczeniu k¡ta α mi¦dzy wek−−−−−−−→
+torem Pl,i−1 Pl,i+1 a osi¡ odci¦tych OX ukªadu wspóªrz¦dnych
+
+αi = atan2(yl,i+1 − yl,i−1 , xl,i+1 − xl,i−1 ).
+
+(4.4)
+
+Nast¦pnie z równa«
+!
+
+!
+
+x + L · cos(αi + π2 )
+x
+,
+PL,i = L,i = l,i L2
+yL,i
+yl,i + 2 · sin(αi + π2 )
+!
+
+(4.5)
+
+!
+
+x + L · cos(αi − π2 )
+x
+PR,i = R,i = l,i L2
+yR,i
+yl,i + 2 · sin(αi − π2 )
+
+(4.6)
+
+obliczany jest odpowiednio lewy PL,i i prawy PR,i punkt graniczny w odlegªo±ci L2 od
+punktu referencyjnego Pl,i w kierunku prostopadªym do wspomnianego wektora. Na rysunku 4.7 zaprezentowano t¦ metod¦ w postaci geometrycznej. Przykªad dopuszczalnego
+toru dla trasy testowej przedstawiono na rysunku 4.8. Uzyskany zbiór punktów granicznych posªu»y w procesie optymalizacji toru ruchu, który opisano w kolejnym rozdziale.
+Na rysunku 4.9 pokazano dopuszczalny toru dla zakr¦tu o mierze k¡ta prostego. Punkty
+graniczne ukªadaj¡ si¦ w specyczny sposób zaw¦»aj¡c tor w otoczeniu zakr¦tu od jego wewn¦trznej strony. Obserwujemy to, gdy szeroko±¢ toru L jest wi¦ksza od odst¦pu
+mi¦dzy punktami referencyjnymi trasy ∆s przyj¦tego na etapie interpolacji liniowej.
+
+4.3.
+
+Dopuszczalny tor ruchu
+
+27
+
+PL,i
+Pl,i+1
+
+L
+2
+
+Pl,i
+
+α
+Pl,i−1
+
+L
+2
+
+PR,i
+Rysunek 4.7: Metoda wyznaczania punktów granicznych
+
+Rysunek 4.8: Dopuszczalny tor ruchu trasy testowej
+
+28
+
+4.
+
+Budowa mapy trasy
+
+Rysunek 4.9: Dopuszczalny tor dla k¡ta prostego
+
+Rozdziaª 5
+Algorytmy wyznaczania optymalnej
+±cie»ki
+Zadanie optymalizacji ±cie»ki wymaga na wst¦pie parametryzacji punktów trasy le»¡cych pomi¦dzy punktami ograniczaj¡cymi tor ruchu. Nast¦pnie nale»y przyj¡¢ kryterium
+jako±ci uwzgl¦dniaj¡ce zale»no±ci mi¦dzy punktami, które pozwoli oceni¢ generowane rozwi¡zania i wyznaczy¢ to optymalne przez zmian¦ parametrów. W pracach [15, 16] zaproponowano dwa podstawowe algorytmy optymalizacji  najkrótsz¡ ±cie»k¦ oraz ±cie»k¦
+o minimalnej krzywi¹nie, które przygotowano w ramach tej pracy. Oba algorytmy bazuj¡
+wyª¡cznie na informacji o punktach granicznych.
+5.1
+
+Parametryzacja punktów
+
+Poªo»enie punktu Pi , który le»y pomi¦dzy punktami granicznymi PL,i , PR,i parametryzowanego wspóªczynnikiem αi wyznaczamy ze wzoru
+!
+
+!
+
+!
+
+!
+
+!
+
+x + αi (xL,i − xR,i )
+x + αi ∆xi
+x
+∆xi
+x
+= R,i
+= R,i + αi ·
+, (5.1)
+Pi = i = R,i
+yi
+yR,i + αi (yL,i − yR,i )
+yR,i + αi ∆yi
+yR,i
+∆yi
+gdzie
+
+
+∆x = x
+i
+
+L,i − xR,i
+
+∆yi = yL,i − yR,i
+
+(5.2)
+
+oraz wspóªczynnik αi speªnia warunek
+
+0 ¬ αi ¬ 1.
+
+(5.3)
+
+Zadanie optymalizacji polega na wybraniu takich wspóªczynników αi , które minimalizuj¡
+wska¹nik jako±ci. Geometryczn¡ interpretacj¦ przedstawiono na rysunku 5.1. Przyjmuj¡c dla wszystkich punktów warto±¢ wspóªczynnika α = 0.5, mo»emy odtworzy¢ tras¦
+referencyjn¡ na podstawie punktów granicznych.
+
+30
+
+5.
+
+Algorytmy wyznaczania optymalnej ±cie»ki
+
+∆x
+PL,i
+
+Pi
+
+∆y
+
+αi L
+
+PR,i
+Rysunek 5.1: Punkt Pi parametryzowany wspóªczynnikiem αi
+5.2
+
+Na jkrótsza ±cie»ka
+
+Algorytm wyznaczania najkrótszej ±cie»ki opiera si¦ wprost na wªasno±ciach geometrycznych pomi¦dzy s¡siednimi punktami. Dªugo±¢ trasy to suma n − 1 odcinków, gdzie n
+oznacza liczb¦ punktów reprezentuj¡cych tras¦. Odlegªo±¢ mi¦dzy punktami mo»emy zapisa¢ w postaci wektorowej
+!
+
+!
+
+!
+
+q
+
+(5.5)
+
+x − xi−1
+∆Px,i
+x − xr,i−1 + αi ∆xi − αi−1 ∆xi−1
+∆Pi = Pi − Pi−1 = i
+=
+= r,i
+,
+yi − yi−1
+∆Py,i
+yr,i − yr,i−1 + αi ∆yi − αi−1 ∆yi−1
+(5.4)
+a nast¦pnie jako norm¦ euklidesow¡
+Si = ||∆Pi || =
+
+2
+2
+∆Px,i
++ ∆Py,i
+.
+
+Sum¦ kwadratów dªugo±ci odcinków
+
+S2 =
+
+n
+X
+i=2
+
+Si2 =
+
+n
+X
+
+2
+2
+∆Px,i
++ ∆Py,i
+
+(5.6)
+
+i=2
+
+mo»emy przedstawi¢ jako funkcj¦ wektora α
+
+
+
+
+α1
+ 
+ α2 
+
+α=
+ .. 
+ . 
+
+(5.7)
+
+αn
+niezale»nych zmiennych
+
+S 2 = αT Hs α + Bs α + C,
+
+(5.8)
+
+5.2.
+
+Najkrótsza ±cie»ka
+
+31
+
+gdzie C to warto±¢ staªa niezale»na od wektora α. Wspóªczynniki macierzy Hs obliczamy
+z nast¦puj¡cych równa«
+
+···
+···
+···
+
+
+
+hs1,1 hs1,2
+0
+h
+ s2,1 hs2,2 hs2,3
+
+ 0
+hs3,2 hs3,3
+
+ ..
+Hs =  .
+
+
+ 0
+ .
+ .
+ .
+
+···
+
+0
+
+···
+
+hs3,4
+
+0
+..
+
+.
+
+hsi−1,i hsi,i hsi,i+1
+
+0
+..
+
+···
+.
+
+0
+
+
+
+
+
+
+
+
+
+,
+
+0 
+
+.. 
+
+. 
+
+(5.9)
+
+hsn,n−1 hsn,n
+
+hsi−1,i = −∆xi−1 ∆xi − ∆yi−1 ∆yi ,
+
+(5.10)
+
+hsi,i+1 = −∆xi ∆xi+1 − ∆yi ∆yi+1 ,
+
+(5.11)
+
+(
+
+hsi,i =
+
+0
+
+0
+
+0
+0
+0
+..
+.
+
+2(∆x2i + ∆yi2 ) dla i 6= 1 oraz i 6= n,
+∆x2i + ∆yi2
+dla i = 1 lub i = n.
+
+(5.12)
+
+Dla rozpatrywanego zagadnienia optymalizacji trasy szeroko±¢ toru jest staªa i wynosi L.
+Wówczas w ka»dym punkcie Pi speªnione jest równanie
+
+∆x2i + ∆yi2 = L2 .
+Nale»y zauwa»y¢, »e H jest macierz¡ symetryczn¡, poniewa» zachodzi równo±¢
+
+hsi,j = hsj,i .
+Z kolei wektor Bs konstruujemy wedªug równania
+
+
+(xr,1 − xr,2 )∆x1 + (yr,1 − yr,2 )∆y1
+(2xr,2 − xr,1 − xr,3 )∆x2 + (2yr,2 − yr,1 − yr,3 )∆y2
+..
+.
+
+T
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+(2x
+−
+x
+−
+x
+)∆x
++
+(2y
+−
+y
+−
+y
+)∆y
+Bs = 2 · 
+r,i
+r,i−1
+r,i+1
+i
+r,i
+r,i−1
+r,i+1
+i
+
+
+
+
+.
+
+
+.
+.
+
+
+
+
+(2xr,n−1 − xr,n−2 − xr,n )∆xn−1 + (2yr,n−1 − yr,n−2 − yr,n )∆yn−1 
+
+.
+
+(5.13)
+
+(xr,n − xr,n−1 )∆xn + (yr,n − yr,n−1 )∆yn
+Kryterium jako±ci potrzebne do wyznaczenia najkrótszej ±cie»ki opisane jest równaniem
+
+Js = min αT Hs α + Bs α.
+α
+
+(5.14)
+
+Zadanie sprowadza si¦ do wyznaczenia minimum n-wymiarowej formy kwadratowej Js .
+Przykªad optymalizacji przez wyznaczenie najkrótszej ±cie»ki przedstawiono na rysunku
+5.2. Przyjmujemy, »e punkt pocz¡tkowy P1 stanowi pierwszy punkt referencyjny Pl,1 , co
+jest to»same z zaªo»eniem
+α1 = 0.5.
+(5.15)
+
+32
+
+5.
+
+Algorytmy wyznaczania optymalnej ±cie»ki
+
+Rysunek 5.2: Wyznaczona najkrótsza ±cie»ka
+5.3
+
+cie»ka o minimalnej krzywi¹nie
+
+W przypadku wyznaczania trasy o minimalnej krzywi¹nie niemo»liwe jest wyprowadzenie
+równania na kryterium jako±ci postaci
+
+min αT Hα + Bα
+α
+
+(5.16)
+
+na podstawie wªasno±ci geometrycznych, gdy» przej±cie ze wspóªrz¦dnych punktów parametryzowanych wspóªczynnikami α wymaga wykorzystania funkcji trygonometrycznych
+(zobacz podrozdziaª 3.2), w których nie mo»na wydzieli¢ wspóªczynników αi z postaci
+uwikªanej do postaci iloczynowej.
+Autorzy prac [15, 16] zaproponowali rozwi¡zanie oparte na krzywych sklejanych1 
+wielomianów stopnia trzeciego postaci
+
+2
+3
+
+ xi (t) = ai,x + bi,x t + ci,x t + di,x t
+
+y (t) = a
+
+i
+i,y
+
+ t(s) = s−si0
+
++ bi,y t + ci,y t2 + di,y t3 ,
+
+(5.17)
+
+dsi
+
+gdzie t(s) reprezentuje odci¦t¡ funkcji krzywoliniowej normalizowan¡ dªugo±ci¡ i-tego odcinka trasy. Zaªo»enia, jakie autorzy poczynili przy opracowywaniu rozwi¡zania to:
+1 W j¦zyku angielskim krzywa sklejana okre±lana jest jako spline.
+
+5.3.
+
+cie»ka o minimalnej krzywi¹nie
+
+33
+
+• ci¡gªe pierwsze i drugie pochodne funkcji  oznacza to gªadkie przej±cia mi¦dzy
+odcinkami trasy,
+• krzywa przechodz¡ca przez wszystkie punkty Pi ,
+• ci¡gªo±¢ mi¦dzy ostatnim Pn a pierwszym P1 punktem trasy  ogranicza to mo»liwo±¢
+zastosowania algorytmu wyª¡cznie do zamkni¦tych tras, czyli takich, gdzie start
+i meta s¡ w tym samym miejscu.
+Krzywizna trasy Γ̂ jest wyznaczana zgodnie z nast¦puj¡cym równaniem.
+
+Γ̂2 =
+
+d2 x(s)
+ds2
+
+!2
+
+d2 y(s)
++
+ds2
+
+!2
+
+=
+
+dt(s)
+ds
+
+!4 
+
+d2 x(t)
+
+dt2
+
+!2
+
+d2 y(t)
++
+dt2
+
+!2 
+
+(5.18)
+
+.
+
+Dªugo±¢ odcinków jest staªa i wynosi
+
+dt(s)
+ds
+
+!
+
+=
+
+1
+,
+∆s
+
+(5.19)
+
+wi¦c mo»emy j¡ pomin¡¢ przy przeksztaªceniu krzywizny Γ̂ do funkcji kryterialnej JΓ
+
+d2 x(t)
+JΓ = min
+α
+dt2
+
+!2
+
+d2 y(t)
++
+dt2
+
+!2
+
+(5.20)
+
+.
+
+Funkcja kryterialna wymaga obliczenia drugich pochodnych funkcji krzywych sklejanych
+w punkcie t = 0. Przykªadowo, dla krzywej sklejanej x(t) speªnione jest równanie drugiej
+pochodnej
+d2 x(t)
+|t=0 = Dx x.
+(5.21)
+dt2
+Wektor x liniowo zale»y od wektora wspóªczynników α
+(5.22)
+
+x = xR + [dx]α,
+gdzie [dx] to macierz n × n tworzona wedªug równania
+(
+
+[dx]i,j =
+
+∆Px,i dla i = j
+.
+0
+dla i 6= j
+
+(5.23)
+
+Po podstawieniu równania (5.22) do (5.21) otrzymujemy
+
+d2 x(t)
+= Dx (xR + [dx]α) = Dx xR + Dx [dx]α.
+dt2 t=0
+
+(5.24)
+
+Macierz Dx dla wymiaru n = 5 ma posta¢
+
+
+
+
+−1 1
+0
+0
+0
+
+
+ 0 −1 1
+0
+0
+
+
+0 −1 1
+0
+Dx = 
+ 0
++
+
+
+0
+0
+0
+−1
+1
+
+
+1
+0
+0
+0 −1
+
+
+2
+
+0
+
+− 6
+0
+
+0
+1
+
+1
+2
+0
+0
+0
+
+0
+1
+2
+0
+0
+
+0
+0
+1
+2
+0
+
+
+
+0 4
+
+1
+0
+
+
+0
+ 0
+
+1 0
+2 1
+
+1
+4
+1
+0
+0
+
+0
+1
+4
+1
+0
+
+0
+0
+1
+4
+1
+
+−1 
+
+1
+
+0
+
+0
+
+1
+
+4
+
+
+
+0
+1
+0
+0 −1
+
+
+−1 0
+1
+0
+0
+
+
+ 0 −1 0
+1
+0
+
+ . (5.25)
+
+0 −1 0
+1
+ 0
+
+1
+0
+0 −1 0
+
+34
+
+5.
+
+Algorytmy wyznaczania optymalnej ±cie»ki
+
+Rysunek 5.3: cie»ka o minimalnej krzywi¹nie
+Wówczas kwadrat drugiej pochodnej mo»emy zapisa¢ w nast¦puj¡cy sposób
+
+d2 x(t)
+|t=0
+dt2
+
+!2
+
+= (Dx xR + Dx [dx]α)T (Dx xR + Dx [dx]α)
+=α
+
+T
+
+
+
+T
+
+[dx]
+
+DxT Dx [dx]
+
+
+
+α+2
+
+
+
+xTR DxT Dx [dx]
+
+(5.26)
+
+
+α + xTR DxT Dx xR .
+
+Analogicznie post¦pujemy dla wspóªrz¦dnych y . Po przeksztaªceniach, funkcj¦ kryterialn¡
+(5.20) zapisujemy w postaci macierzowej
+
+JΓ = min αT HΓ α + BΓ α,
+
+(5.27)
+
+HΓ = [dx]T DxT Dx [dx] + [dy]T DyT Dy [dy],
+
+(5.28)
+
+α
+
+gdzie
+
+
+
+
+
+BΓ = 2 xTR DxT Dx [dx] + y TR DyT Dy [dy] .
+
+(5.29)
+
+Na rysunku 5.3 zaprezentowano uzyskan¡ ±cie»k¦ o minimalnej krzywi¹nie dla trasy testowej z zaªo»eniem, »e punkt pocz¡tkowy stanowi pierwszy punkt referencyjny P1 = Pl,1 .
+
+Rozdziaª 6
+Algorytmy sterowania robotem
+Przejazd testowy i wªa±ciwy jest realizowany przy pomocy ró»nych algorytmów. Pierwszy
+bazuje na prostym algorytmie regulacji poªo»enia wzgl¦dem linii zaprezentowanym na rysunku 1.1. Z kolei drugi jest bardziej zªo»ony i wymaga wyznaczenia trajektorii przejazdu
+±rodka osi robota, co opisano poni»ej.
+6.1
+
+Wyznaczanie tra jektorii robota
+
+Wyznaczenie trajektorii ruchu robota przebiega w dwóch etapach. Najpierw przeksztaªcamy ±cie»k¦ uzyskan¡ w procesie optymalizacji na trajektori¦ pozycji ±rodka moduªu
+czujników. Podstaw¡ do jej wyznaczenia jest wybór pr¦dko±ci zadanej vd , z jak¡ chcemy
+pokona¢ tras¦. Nale»y zaznaczy¢, »e pr¦dko±¢ ta nie oznacza pr¦dko±ci post¦powej ±rodka
+osi robota, a pr¦dko±¢ dla ±rodka moduªu czujników rozumianej jako przemieszczenie tego
+punktu w okre±lonym czasie. Sterowanie odbywa si¦ z t¡ sam¡ cz¦stotliwo±ci¡, z jak¡ robot przesyªa pomiary i wynosi f = 100 Hz. Kolejne punkty nale»y wyznacza¢ przyrostowo
+w odlegªo±ci ∆d = vfd . Algorytm wyznaczania trajektorii ±rodka moduªu czujników jest
+analogiczny do algorytmu interpolacji liniowej, który opisano w podrozdziale 4.2.
+W drugim etapie wyznaczamy trajektori¦ robota, jego orientacj¦ oraz pr¦dko±¢ post¦pow¡ i k¡tow¡ na podstawie trajektorii moduªu czujników. Przyjmijmy, »e Pc,i oznacza
+pozycj¦ ±rodka moduªu czujników w i-tej iteracji. Wówczas pozycj¦ robota wyznaczamy
+wedªug równania
+!
+d−l
+(xc,i − xr,i−1 )
+d
+,
+(6.1)
+Pr,i = d−l
+(yc,i − yr,i−1 )
+d
+gdzie
+
+d = ||Pc,i − Pr,i−1 ||.
+
+(6.2)
+
+θr,i = atan2(yc,i − yr,i−1 , xc,i − xr,i−1 ).
+
+(6.3)
+
+Orientacja robota wynosi
+
+Jako stan pocz¡tkowy robota Pr,1 przyjmujemy
+
+
+
+
+
+
+
+
+xr,1
+−l
+
+
+ 
+Pr,1 =  yr,1  =  0  .
+θr,1
+0
+
+(6.4)
+
+Nast¦pnie obliczamy chwilow¡ pr¦dko±¢ post¦pow¡ vr,i oraz k¡tow¡ ωr,i robota
+
+vr,i = ||Pr,i+1 − Pr,i || · f,
+
+(6.5)
+
+36
+
+6.
+
+Algorytmy sterowania robotem
+
+ωr,i = (θr,i+1 − θr,i ) · f.
+6.2
+
+(6.6)
+
+Algorytm ±ledzenia tra jektorii
+
+Do ±ledzenia wyznaczonej trajektorii robota u»yto algorytmu Samsona i Ait-Abderrahima
+[17], który w przeciwie«stwie do klasycznego algorytmu Samsona obejmuje przypadek,
+gdy zadana pr¦dko±¢ post¦powa i k¡towa robota zale»¡ od czasu. Algorytm ten bazuje na
+bª¦dzie poªo»enia mi¦dzy rzeczywist¡ a zadan¡ warto±ci¡ trajektorii referencyjnej
+
+x
+
+e = xd − x
+
+(6.7)
+
+ye = yd − y
+
+oraz bª¦dzie orientacji
+
+(6.8)
+
+θe = θd − θ.
+
+Bª¡d poªo»enia jest nast¦pnie przeliczany na referencyjny bª¡d ±ledzenia trajektorii wzgl¦dem ukªadu robota
+
+e = cos θ · x + sin θ · y
+x
+e
+e
+(6.9)
+ey = − sin θ · xe + cos θ · ye .
+Sterowanie kinematyczne zapewniaj¡ce ±ledzenie trajektorii referencyjnej dane jest wzorami
+vref = k1 ex + vd cos θe ,
+(6.10)
+
+ωref = ωd + k2 θe + vd ey
+
+sin θe
+.
+θe
+
+(6.11)
+
+Równania pr¦dko±ci post¦powej (6.10) i k¡towej (6.11) wymagaj¡ przeksztaªcenia do pr¦dko±ci lewego i prawego koªa, co robimy wedªug zale»no±ci
+
+η
+
+L
+L = vref − 4 ωref
+ηR = vref + L ωref .
+4
+
+(6.12)
+
+Rozdziaª 7
+Symulacje i eksperymenty
+Na wst¦pie nale»y zdeniowa¢ zasady, jakie musz¡ by¢ speªnione, aby robot nie wypadª
+z trasy. Nast¦pnie zostan¡ one wykorzystane do przeprowadzenia symulacji oraz eksperymentów na rzeczywistym robocie.
+7.1
+
+Warunki poprawnego uko«czenia przejazdu
+
+Czynnikiem decyduj¡cym o realizowalno±ci zadanej trajektorii jest warto±¢ siªy od±rodkowej F , dziaªaj¡cej na robota w trakcie przejazdu, która opisana jest równaniem
+
+F =
+
+mvr2
+,
+r
+
+(7.1)
+
+gdzie m oznacza mas¦ robota, vr jego pr¦dko±¢ a r promie« zakr¦tu. Przyjmiemy, »e
+siªa ta nie mo»e przekroczy¢ warto±ci granicznej Fgr , która oznacza maksymaln¡ warto±¢
+zapewniaj¡c¡ brak po±lizgu poprzecznego kóª
+
+F ¬ Fgr .
+
+(7.2)
+
+Zadanie przeksztaªcamy do ograniczenia na pr¦dko±¢ maksymaln¡ robota vmax
+
+vr ¬ vmax (r),
+
+(7.3)
+
+która zale»y od promienia zakr¦tu r
+
+vmax (r) =
+
+q
+
+rftr g,
+
+(7.4)
+
+gdzie ftr oznacza wspóªczynnik tarcia poprzecznego kóª a g przyspieszenie ziemskie. Warto±¢ wspóªczynnika wyznaczamy eksperymentalnie umieszczaj¡c robota na pªycie wykonanej z identycznego materiaªu co podªo»e trasy. Nast¦pnie wychylamy pªyt¦ w kierunku poprzecznym do robota i wyznaczamy maksymaln¡ warto±¢ k¡ta α, dla której robot
+nie zsuwa si¦ w bok. Warto±¢ wspóªczynnika tarcia ftr wynosi
+
+ftr = tg α.
+W przeprowadzonym eksperymencie uzyskano nast¦puj¡ce warto±ci:
+
+• robot z wyª¡czonym nap¦dem tunelowym  α = 36◦ , ftr = 0, 7265,
+• robot z wª¡czonym nap¦dem tunelowym  α = 68◦ , ftr = 2, 4751.
+
+(7.5)
+
+38
+
+7.
+
+Symulacje i eksperymenty
+
+Rysunek 7.1: cie»ka ±rodka moduªu czujników dla wybranych algorytmów
+Promie« zakr¦tu jest odwrotnie proporcjonalny do krzywizny trasy
+
+1
+.
+K
+
+(7.6)
+
+r = ∞.
+
+(7.7)
+
+r=
+Dla K = 0 przyjmujemy
+
+Reasumuj¡c, aby przejazd byª uznany jako prawidªowy przyjmujemy, »e nierówno±¢ (7.3)
+jest speªniona w ka»dej chwili. W celu jej werykacji obliczamy chwilowy promie« zakr¦tu
+trajektorii robota, którego sposób otrzymania opisano w podrozdziale 6.1, a nast¦pnie
+wyznaczamy maksymaln¡ dopuszczaln¡ pr¦dko±¢ robota i porównujemy z pr¦dko±ci¡ aktualn¡.
+7.2
+
+Symulacje przejazdów
+
+Pozycj¦ ±rodka moduªu czujników dla mapy trasy oraz algorytmów najkrótszej ±cie»ki
+i minimalnej krzywizny dla symulowanego przejazdu przedstawiono na rysunku 7.1. Z kolei
+na rysunku 7.2 pokazano odpowiadaj¡c¡ tym ±cie»kom ±cie»ki ruchu ±rodka osi robota.
+Rozpatrzmy dwa przypadki, gdy dysponujemy powolnym oraz bardzo szybkim robotem1 .
+Dla powolnego przejazdu przyjmijmy pr¦dko±¢ post¦pow¡ ±rodka osi robota vr = 0, 2 ms .
+Rezultaty uzyskane w symulacji przedstawiono w tabeli 7.1. W tym przypadku, decydu1 Poniewa» w pracy tej pomini¦to kwesti¦ dostosowywania pr¦dko±ci jazdy robota do aktualnej krzywizny toru przyjmujemy, »e pr¦dko±¢ ta jest staªa w trakcie trwania przejazdu.
+
+7.2.
+
+Symulacje przejazdów
+
+39
+
+Rysunek 7.2: cie»ka robota dla symulowanych przejazdów
+
+Tabela 7.1: Parametry przejazdu robotem powolnym
+cie»ka
+referencyjna
+najkrótsza
+o minimalnej krzywi¹nie
+
+Dªugo±¢ trasy [m]
+13,08
+10,965
+12,99
+
+Czas [s]
+65,4
+54,83
+64,95
+
+40
+
+7.
+
+Symulacje i eksperymenty
+
+Tabela 7.2: Parametry przejazdu robotem szybkim
+cie»ka
+referencyjna
+najkrótsza
+o minimalnej krzywi¹nie
+
+Dªugo±¢ trasy [m]
+13,08
+10,965
+12,99
+
+Czas [s]
+∞
+∞
+12,99
+
+Tabela 7.3: Maksymalne pr¦dko±ci i parametry przejazdu z wyª¡czonym nap¦dem tunelowym
+cie»ka
+referencyjna
+najkrótsza
+o minimalnej krzywi¹nie
+
+Dªugo±¢ trasy [m]
+13,08
+10,965
+12,99
+
+h i
+
+vmax ms
+0,536
+0,274
+0,704
+
+Czas [s]
+24,4
+40,01
+18,45
+
+Zmiana
+
++63, 97%
+−24, 39%
+
+j¡cym czynnikiem jest dªugo±¢ trasy, jak¡ musi pokona¢ robot. Najlepszy czas przejazdu
+uzyskano dla algorytmu najkrótszej ±cie»ki. Dªugo±¢ trasy referencyjnej i ±cie»ki o minimalnej krzywi¹nie jest porównywalna. Algorytm minimalnej krzywizny zyskuje na zakr¦tach, gdy» skraca tor jazdy w tych miejscach. Wypracowana przewaga nad przejazdem
+po referencyjnej ±cie»ce jest jednak niwelowana z powodu wymaganego przygotowania
+pozycji przed kolejnymi zakr¦tami i szerszym opuszczaniem ich. St¡d te» oba przejazdy
+uzyskaªy porównywalny wynik. Sumarycznie czas przejazdu po zastosowaniu optymalizacji ulegª poprawie o okoªo 16% i, czego nale»aªo si¦ spodziewa¢, jest proporcjonalny do
+dªugo±ci trasy.
+Dla szybkiego przejazdu zaproponowano pr¦dko±¢ ±rodka osi robota vr = 1 ms . Jak
+si¦ okazaªo pr¦dko±¢ ta przekracza maksymaln¡ dopuszczaln¡ pr¦dko±¢ vmax zarówno dla
+najkrótszej ±cie»ki jak i trasy referencyjnej, nawet z wª¡czonym nap¦dem tunelowym.
+Wyniki symulacji zaprezentowano w tabeli 7.2. Jak mo»na byªo si¦ spodziewa¢, dla ±cie»ki
+o minimalnej krzywi¹nie uzyskano pi¦ciokrotne skrócenie czasu przejazdu i byª to jedyny
+przejazd, w którym robot nie wypadª z trasy.
+Podsumowuj¡c, najkrótsza trasa sprawdza si¦ dla wolnych przejazdów, gdy siªy od±rodkowe s¡ stosunkowo maªe i nie przekraczaj¡ dopuszczalnej warto±ci nawet na ostrych
+zakr¦tach. Niestety dla szybkich przejazdów nie mo»e by¢ stosowana. Optymalizacja toru
+do minimalnej krzywizny ma zastosowanie przy szybszych przejazdach z racji wygªadzania
+zakr¦tów. Brak tej wªasno±ci eliminuje pozostaªe wyznaczone tory przejazdu.
+Na koniec dla ka»dej z wyznaczonych tras okre±limy maksymalne pr¦dko±ci przejazdu
+i uzyskane dzi¦ki nim czasy przejazdu. Maksymalne pr¦dko±ci przejazdu vmax z wyª¡czonym nap¦dem tunelowym zebrano w tabeli 7.3, a z wª¡czonym w tabeli 7.4. W obu
+przypadkach optymalizacja dla minimalnej krzywizny skutkowaªa popraw¡ czasu przejazdu o okoªo 25%. Na rysunku 7.3 przedstawiono zbiorcze porównanie osi¡ganych rezultatów
+w funkcji pr¦dko±ci v dla prezentowanych strategii z wyª¡czonym oraz wª¡czonym nap¦dem tunelowym. Ró»nica w rezultatach mi¦dzy dwoma przypadkami wynika ze wzrostu
+wspóªczynnika tarcia kóª, co skutkuje tak»e wzrostem maksymalnych pr¦dko±ci przejazdu
+i popraw¡ czasu pokonania trasy
+Symulacje powtórzono dla drugiej trasy testowej, któr¡ wraz z najkrótsz¡ ±cie»k¡ oraz
+t¡ o minimalnej krzywi¹nie zaprezentowano na rysunku 7.4. Rezultaty uzyskane w przeje¹dzie z wyª¡czonym nap¦dem tunelowym przedstawiono w tabeli 7.5 a z wª¡czonym
+w tabeli 7.6. Wyniki ponownie potwierdziªy, »e przejazd po trasie o minimalnej krzywi¹nie pozwala uzyska¢ najlepszy czas przejazdu ze wszystkich prób. Wynik poprawiª si¦
+
+7.2.
+
+Symulacje przejazdów
+
+41
+
+Tabela 7.4: Maksymalne pr¦dko±ci i parametry przejazdu z wª¡czonym nap¦dem tunelowym
+cie»ka
+referencyjna
+najkrótsza
+o minimalnej krzywi¹nie
+
+Dªugo±¢ trasy [m]
+13,08
+10,965
+12,99
+
+h i
+
+vmax ms
+0,98
+0,506
+1,3
+
+Czas [s]
+13,34
+21,67
+9,99
+
+Zmiana
+
++62, 44%
+−25, 11%
+
+Rysunek 7.3: Porównanie rezultatów dla trasy testowej
+
+Tabela 7.5: Maksymalne pr¦dko±ci i parametry przejazdu z wyª¡czonym nap¦dem tunelowym dla drugiej trasy testowej
+cie»ka
+referencyjna
+najkrótsza
+o minimalnej krzywi¹nie
+
+Dªugo±¢ trasy [m]
+6,98
+6,51
+7,48
+
+h i
+
+vmax ms
+0,715
+0,732
+1,288
+
+Czas [s]
+9,76
+8,89
+5,81
+
+Zmiana
+
+−8, 91%
+−40, 47%
+
+Tabela 7.6: Maksymalne pr¦dko±ci i parametry przejazdu z wª¡czonym nap¦dem tunelowym dla drugiej trasy testowej
+cie»ka
+referencyjna
+najkrótsza
+o minimalnej krzywi¹nie
+
+Dªugo±¢ trasy [m]
+6,98
+6,51
+7,48
+
+vmax
+1,32
+1,35
+2,37
+
+h i
+m
+s
+
+Czas [s]
+5,29
+4,82
+3,16
+
+Zmiana
+
+−8, 88%
+−40, 26%
+
+42
+
+7.
+
+Symulacje i eksperymenty
+
+Rysunek 7.4: Tor przejazdu dla drugiej trasy testowej
+o okoªo 40%. Z kolei dla przejazdu po najkrótszej ±cie»ce poprawa wyniosªa okoªo 9%.
+Na rysunku 7.5 pokazano zbiorcze porównanie dla drugiej trasy testowej.
+
+7.3
+
+Przejazd wªa±ciwy
+
+Celem przejazdu wªa±ciwego jest pokonanie trasy po optymalnej ±cie»ce. Diagram funkcyjny algorytmu zaprezentowano na rysunku 1.3. Do realizacji zadania wymagana jest
+trajektoria, po której powinien porusza¢ si¦ robot. Najstosowniejszym rozwi¡zaniem byªoby wygenerowanie tej»e trajektorii na komputerze oraz przesªanie jej do robota, który
+zapisaªby dane w pami¦ci przed rozpocz¦ciem przejazdu. Nast¦pnie robot samodzielnie
+realizuje przejazd po zadanej trasie bez komunikacji z komputerem.
+Niestety w naszym przypadku nie jest to mo»liwe z powodu niewystarczaj¡cych mo»liwo±ci obliczeniowych oraz ograniczonej pami¦ci mikrokontrolera. St¡d te» wymagana
+jest staªa komunikacja Bluetooth mi¦dzy komputerem, na którym uruchomiony jest program peªni¡cy rol¦ sterownika kinematycznego dla zadania ±ledzenia trajektorii, a robotem, który to zadanie realizuje. Robot wykonuje cyklicznie pomiary przemieszcze« lewego
+i prawego koªa oraz orientacji i przesyªa dane do komputera. Program komputerowy na
+podstawie tych pomiarów estymuje nowe poªo»enie robota i przy u»yciu algorytmu ±ledzenia trajektorii generuje nowe pr¦dko±ci obrotowe na koªa i wysyªa je do robota. Niniejszy
+podziaª przedstawia rysunek 7.6.
+Przeprowadzone badania na rzeczywistym robocie uwidoczniªy wady niniejszego rozwi¡zania. Komunikacja Bluetooth z urz¡dzeniem zewn¦trznym obarczona jest pewnym
+opó¹nieniem, które negatywnie wpªywa na realizacj¦ zadania. Stan robota w momencie
+
+7.3.
+
+Przejazd wªa±ciwy
+
+43
+
+Rysunek 7.5: Porównanie rezultatów dla drugiej trasy testowej
+pomiarów z czujników ró»ni si¦ od tego, gdy zadawane jest nowe sterowanie na podstawie
+tych»e danych. Kolejny problem stanowi czas reakcji jednostki DMP. Obrót  zwªaszcza
+dla du»ych pr¦dko±ci k¡towych  uwidacznia si¦ w pomiarach z pewnym opó¹nieniem,
+co uniemo»liwia efektywne wykorzystanie opracowanego rozwi¡zania i wymusza bardziej
+zachowawcz¡ jazd¦. Przykªady prób przejazdu po zadanej trajektorii z pr¦dko±ci¡ post¦pow¡ robota vr = 0, 4 ms zaprezentowano na rysunkach 7.7 i 7.8. Mo»emy zaobserwowa¢
+rosn¡ce oscylacje poªo»enia robota wzgl¦dem trajektorii referencyjnej, gdy robot pokonuje
+zakr¦t.
+
+trajektoria
+
+Komputer
+
+Estymacja
+położenia
+robota
+
+Przejazd właściwy
+
+położenie
+robota
+
+Sterownik kinematyczny
+
+przemieszczenie
+lewego koła
+
+Układ pomiarowy
+przemieszczenia
+i orientacji robota
+
+Sterownik prędkości
+silników
+
+Robot
+
+7.
+
+przemieszczenie
+prawego koła
+
+orientacja
+robota
+
+prędkość zadana
+prawego silnika
+
+prędkość zadana
+lewego silnika
+
+Komunikacja
+Bluetooth
+
+44
+Symulacje i eksperymenty
+
+Rysunek 7.6: Przejazd wªa±ciwy z uwzgl¦dnieniem ukªadów realizuj¡cych zadania
+
+7.3.
+
+Przejazd wªa±ciwy
+
+45
+
+Rysunek 7.7: Porównanie zadanej optymalnej ±cie»ki i wykonanego przejazdu
+
+Rysunek 7.8: Porównanie zadanej optymalnej ±cie»ki i drugiego wykonanego przejazdu
+
+Rozdziaª 8
+Podsumowanie
+Celem pracy byªo zaproponowanie algorytmów optymalizacji toru przejazdu robota klasy
+linefollower po trasie w najkrótszym mo»liwym czasie. Przedstawiono algorytmy wyznaczania najkrótszej ±cie»ki oraz ±cie»ki o minimalnej krzywi¹nie. Nast¦pnie przygotowano
+±rodowisko do wykonania bada« oraz porównano wªasno±ci zaimplementowanych algorytmów. Przeprowadzone symulacje, zakªadaj¡ce staª¡ pr¦dko±¢ przejazdu, potwierdzaj¡
+przewidywan¡ popraw¦ czasu przejazdu. Dysponuj¡c powolnym robotem optymalny jest
+przejazd po najkrótszej ±cie»ce. Uzyskany wynik jest o 16% lepszy wzgl¦dem ±cie»ki referencyjnej. Z kolei dla szybkiej konstrukcji optymalny tor ruchu to ±cie»ka o minimalnej
+krzywi¹nie. Osi¡gni¦ty rezultat jest okoªo 25% lepszy od przejazdu referencyjnego. Dodatkowo pokazano, »e w przypadku kr¦tych tras minimalizacja krzywizny toru ruchu mo»e
+by¢ jedynym sposobem na przejazd z du»¡ pr¦dko±ci¡.
+Przeprowadzone badania pozwalaj¡ na sformuªowanie zasad post¦powania o ró»nym
+stopniu zªo»ono±ci w praktycznym aplikowaniu opisywanych rozwi¡za«, które to zasady
+mo»na zapisa¢ w postaci nast¦puj¡cych punktów.
+1. Dla powolnej konstrukcji zalecany jest przejazd po najkrótszej ±cie»ce.
+2. Dla szybkiego robota pierwsz¡ metod¡ optymalizacji jest przejazd po referencyjnej trasie z nadrz¦dnym prolerem pr¦dko±ci, który efektywnie wykorzystuje dªugie
+proste przyspieszaj¡c na nich i zapewnia utrzymanie na trasie przez redukcj¦ pr¦dko±ci przed ciasnymi zakr¦tami. Algorytm opisano w pracy [7]. Bazuje na informacji
+o pokonanym dystansie.
+3. Kolejn¡ propozycj¡ optymalizacji dla szybkiej konstrukcji jest przejazd po ±cie»ce
+o minimalnej krzywi¹nie. To rozwi¡zanie zaprezentowane w niniejszej pracy charakteryzuje si¦ wi¦ksz¡ zªo»ono±ci¡, poniewa» wymaga iteracyjnego wyznaczania
+poªo»enia wzgl¦dem punktu startowego, jednak»e pozwala na szybsze pokonywanie
+zakr¦tów kosztem ewentualnego wydªu»enia trasy.
+4. Ostatni¡ propozycj¡ jest poª¡czenie dwóch poprzednich metod. Algorytm wyznaczaªby trajektori¦ w dwóch etapach. Pierwszy polega na wyznaczeniu ±cie»ki o minimalnej krzywi¹nie a drugi na optymalizacji prolu pr¦dko±ci.
+Realizacja proponowanych optymalizacji na rzeczywistym robocie byªa utrudniona.
+Metoda zakªadaªa wykonywanie oblicze« na komputerze, w tym generowanie optymalnej
+±cie»ki i zdalne sterowanie robotem w trakcie wªa±ciwego przejazdu. Metoda ta nie sprawdza si¦ z powodu opó¹nie« w transmisji danych mi¦dzy robotem a komputerem. Ponadto,
+
+48
+
+8.
+
+Podsumowanie
+
+informacja o orientacji robota z jednostki inercyjnej z racji maªej cz¦stotliwo±ci generowania kolejnych pomiarów sprawdza si¦ jedynie dla wolnych przejazdów. Zaobserwowano
+tak»e opó¹nienia w reakcji jednostki dla wi¦kszej pr¦dko±ci k¡towej robota i chwilowe
+znaczne ró»nice mi¦dzy faktyczn¡ a wyliczon¡ orientacj¡ robota.
+Proponowane dalsze dziaªania, które mog¡ rozwi¡za¢ zaprezentowane problemy to
+nowy sposób wyznaczania orientacji robota, który uwzgl¦dniaªby zarówno pomiary z jednostki inercyjnej, a tak»e odczyty z enkoderów poprzez na przykªad ltr Kalmana lub
+Magwicka. Kolejnym krokiem jest wyposa»enie robota w szybszy mikrokontroler z jednostk¡ zmiennoprzecinkow¡ oraz wi¦ksz¡ pami¦ci¡, aby pomie±ci¢ dane o wygenerowanej
+trajektorii i upora¢ si¦ z obliczeniami w ograniczonym czasie, po to, by mo»na byªo zrezygnowa¢ z komunikacji mi¦dzy komputerem a robotem w trakcie przejazdu. Komunikacja
+ograniczaªaby si¦ jedynie do wysªania przed startem optymalnej trajektorii przejazdu wyznaczonej na komputerze.
+
+Bibliograa
+[1] Robotic Arena 2017 - Regulamin konkurencji Linefollower Turbo.
+
+www.roboticarena.pl/static/ra_site/regulaminy/LF_Turbo.pdf
+
+[2] Robotex 2017 - Regulamin konkurencji Line following.
+
+www.robotex.ee/wp-content/uploads/2017/06/robotex_line_following_
+rules_ENG.pdf
+
+[3] R.S. Sharp D. Casanova. On minimum time vehicle manoeuvring: the theoretical optimal time. Praca doktorska, Uniwersytet Craneld, 2000.
+[4] Trójwymiarowy symulator wy±cigów samochodowych TORCS
+
+www.wikipedia.org/wiki/TORCS
+
+[5] L. Cardamone, D. Loiacono, P.L. Lanzi, A.P. Bardelli. Searching for the Optimal
+Racing Line Using Genetic Algorithms. Proceedings of the 2010 IEEE Conference on
+Computational Intelligence and Games, s. 388-394, 2010.
+[6] Baton. Algorytm linefollowera w C  dla pocz¡tkuj¡cych i nie tylko.
+
+www.forbot.pl/blog/algorytm-linefollowera-c-poczatkujacych-id2722
+
+[7] W. Lipieta. Badania porównawcze algorytmów ±ledzenia trasy dla robotów klasy linefollower. Praca magisterska, Politechnika Wrocªawska, 2017.
+[8] Mikrokontroler STM32F103RCT6. Dokumentacja techniczna.
+
+https://www.st.com/resource/en/datasheet/cd00191185.pdf
+
+[9] Moduª Bluetooth HC-06. Dokumentacja techniczna.
+
+www.olimex.com/Products/Components/RF/BLUETOOTH-SERIAL-HC-06/
+resources/hc06.pdf
+
+[10] Silnik Pololu HPCB 10:1 z przedªu»onym waªem. Dokumentacja techniczna.
+
+www.pololu.com/product/3071
+
+[11] Enkoder AMS AS5040. Dokumentacja techniczna.
+
+www.ams.com/documents/20143/36005/AS5040_DS000374_3-00.pdf
+
+[12] Ukªad InvenSense MPU-6050. Dokumentacja techniczna.
+
+www.invensense.com/wp-content/uploads/2015/02/MPU-6000-Datasheet1.pdf
+
+[13] Transoptor odbiciowy KTIR0711s. Dokumentacja techniczna.
+
+www.farnell.com/datasheets/2307824.pdf
+
+[14] K. Tcho«, A. Mazur, I. Dul¦ba, R. Hossa, R. Muszy«ski. Manipulatory i roboty
+mobilne: modele, planowanie ruchu, sterowanie. Problemy Wspóªczesnej Nauki, Teoria
+i Zastosowania. Robotyka. Akademicka Ocyna Wydawnicza PLJ, 2000.
+
+50
+
+BIBLIOGRAFIA
+
+[15] F. Braghin, F. Cheli, S.Melzi, E. Sabbioni. Race driver model. Computers and Structures, s. 1503  1516, 2008.
+[16] N. Poeiro, P. Pugliese. Sviluppo di un modello di pilota da corsa. 2005.
+[17] A. Mazur. Sterowanie oparte na modelu dla nieholonomicznych manipulatorów mobilnych. Ocyna Wydawnicza Politechniki Wrocªawskiej, 2009.
+
+

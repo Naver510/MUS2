@@ -1,0 +1,84 @@
+#include "motor.h"
+#include "robot_config.h"
+
+void LowPassFilter_Init(LowPassFilter_t *LPF, float alpha)
+{
+    LPF->alpha = alpha;
+    LPF->output = 0.0f;
+}
+
+float LowPassFilter_Update(LowPassFilter_t *LPF, float input)
+{
+    LPF->output = LPF->alpha * input + (1.0f - LPF->alpha) * LPF->output;
+    return LPF->output;
+}
+
+void Motor_Init(motor_t *motor, volatile int32_t* enc_count, float Kp, float Ki)
+{
+    memset(motor, 0, sizeof(*motor));
+    motor->encoder_count = enc_count;
+    motor->kp = Kp;
+    motor->ki = Ki;
+    motor->EncoderDirection = 1;
+    motor->PWM_to_MS_Scaler_value = 1.0f;
+    
+    if (motor->encoder_count) {
+        motor->EncoderValue = *(motor->encoder_count);
+        motor->PreviousEncoderValue = motor->EncoderValue;
+    }
+}
+
+void Motor_SetEncoderDirection(motor_t *motor, int8_t direction)
+{
+    motor->EncoderDirection = direction;
+}
+
+static float clampf(float value, float min_value, float max_value)
+{
+    if (value > max_value) return max_value;
+    if (value < min_value) return min_value;
+    return value;
+}
+
+void Motor_CalculateSpeed(motor_t *motor)
+{
+    if (!motor->encoder_count) return;
+
+    motor->EncoderValue = *(motor->encoder_count);
+    
+    int32_t delta = motor->EncoderValue - motor->PreviousEncoderValue;
+    motor->PreviousEncoderValue = motor->EncoderValue;
+    
+    // Apply direction
+    delta *= motor->EncoderDirection;
+
+    // Convert to RPM and MetersPerSecond
+    // N20 AB Hall encoder: 7 PPR (motor shaft) x 4 (quadrature edges) x 10 (gear ratio) = 280 CPR (wheel shaft)
+    // Matches ROBOT_ENCODER_COUNTS_PER_WHEEL_REV in robot_config.h
+    // RPM = (delta / ENCODER_CPR) * (60.0f / dt_s)
+    motor->RPM = ((float)delta / ROBOT_ENCODER_COUNTS_PER_WHEEL_REV) * (60.0f / ROBOT_CONTROL_DT_S);
+    
+    if (motor->RPM > 3000.0f || motor->RPM < -3000.0f) {
+        motor->RPM = motor->PreviousRPM;
+    }
+    
+    LowPassFilter_Update(&motor->EncoderRpmFilter, motor->RPM);
+    motor->PreviousRPM = motor->EncoderRpmFilter.output;
+
+    motor->MetersPerSecond = (motor->EncoderRpmFilter.output / 60.0f) * (ROBOT_WHEEL_DIAMETER_M * PI);
+
+    LowPassFilter_Update(&motor->MetersPerSecondLPF, motor->MetersPerSecond);
+    motor->PreviousMetersSecond = motor->MetersPerSecondLPF.output;
+    // True unfiltered distance traveled for Odometry (crucial for correct mapping shape!)
+    motor->DistanceInMeasurement = ((float)delta / ROBOT_ENCODER_COUNTS_PER_WHEEL_REV) * ROBOT_WHEEL_CIRCUMFERENCE_M;
+    motor->LpfDistanceInMeasurement = motor->MetersPerSecondLPF.output * ROBOT_CONTROL_DT_S;
+}
+
+void PI_Loop(motor_t *motor)
+{
+    motor->current_speed = motor->MetersPerSecondLPF.output;
+
+    motor->error = motor->set_speed - motor->current_speed;
+    motor->Error_sum = clampf(motor->Error_sum + motor->error, -10.0f, 10.0f);
+    motor->speed = motor->set_speed + (motor->error * motor->kp) + (motor->Error_sum * motor->ki);
+}

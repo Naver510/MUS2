@@ -1,0 +1,691 @@
+// Ported from the original Arduino sketch to a PlatformIO-friendly C++ entry point.
+
+#include <Arduino.h>
+#include <WiFi.h>
+#include <AsyncUDP.h>
+#include <SD_MMC.h>
+#include <Wire.h>
+#include <AS5600.h>
+// #include <DFRobot_BMI160.h> // Temporarily disabled
+#include <SPI.h>
+#include <SD.h>
+#include <Adafruit_NeoPixel.h>
+#include <driver/adc.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+#include <freertos/semphr.h>
+#include <cmath>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+
+// --- Forward declarations ---
+void telemetriaCleanBuffered();
+void flushLogBuffer();
+void sdWriteTask(void* parameter);
+void telemetryTask(void* parameter);
+void calibration();
+void request_sensorsRaw();
+void request_params();
+void robot_control();
+void PID(int error);
+bool readLinePosition(float& position, uint8_t& activeCount);
+void speedcontrol(int mota, int motb);
+void forward_brake(int posa, int posb);
+void left_brake(int posa, int posb);
+void right_brake(int posa, int posb);
+void setStatusPixel(uint8_t r, uint8_t g, uint8_t b);
+
+// --- Pin configuration (adjust as needed) ---
+#define I2C1_SDA 6
+#define I2C1_SCL 7
+#define I2C2_SDA 8
+#define I2C2_SCL 9
+
+// CD74HC4067 analog mux pins (matches earlier sensor_array_test.cpp)
+#define MUX_SIG_PIN 1
+#define MUX_S0 2
+#define MUX_S1 3
+#define MUX_S2 4
+#define MUX_S3 5
+
+#undef RGB_BRIGHTNESS
+#undef RGB_BUILTIN
+#define RGB_BRIGHTNESS 20
+#define RGB_BUILTIN 10
+
+#define PIN_MISO 13  // DAT0
+#define PIN_MOSI 11  // CMD
+#define PIN_SCLK 12  // CLK
+#define PIN_CS 20    // Rewire CS to an output-capable pin; defaulting to GPIO20 (change if you choose a different pad)
+
+#define MODE_PIN 21
+#define AIN1_PIN 18
+#define AIN2_PIN 17
+#define BIN1_PIN 16
+#define BIN2_PIN 15
+
+// --- Global devices ---
+// DFRobot_BMI160 bmi160;
+// const int8_t i2c_addr = 0x69;
+
+TwoWire I2C_2 = TwoWire(1);
+
+AS5600 encoder1;
+AS5600 encoder2(&I2C_2);
+
+SPIClass spiSD(HSPI);
+
+// --- Sensor and control state ---
+constexpr uint8_t SensorCount = 14;          // channels 0..13 on the mux
+constexpr uint16_t SENSOR_SPACING = 1000;    // arbitrary units per sensor index
+uint16_t sensorValues[SensorCount];
+uint16_t calibMin[SensorCount];
+uint16_t calibMax[SensorCount];
+bool sensorsCalibrated = false;
+
+// Simple filtering to calm jitter
+float filteredPosition = 0.0f;
+float lastErrorFiltered = 0.0f;
+constexpr float positionAlpha = 0.3f; // 0..1, higher follows faster
+constexpr float dFilterAlpha = 0.5f;   // 0..1, higher follows faster
+constexpr int errorDeadband = 50;      // ignore tiny errors (in position units)
+
+constexpr uint16_t CalibrationSamples = 400; // number of passes for calibration
+constexpr uint16_t CalibratedThresholdDefault = 500; // normalized (0-1000) threshold once calibrated
+
+int lastError = 0;
+boolean onoff = 0;
+int val, cnt = 0, v[3];
+
+float threshold = 1200; // analog value above this is considered "on the line"
+
+float maxspeeda = 255;
+float maxspeedb = 255;
+float basespeeda = 120;
+float basespeedb = 120;
+float TurnSpeed = 70;
+
+float minspeeda = -200;
+float minspeedb = -200;
+
+float Kp = 0.0;
+float Ki = 0.0;
+float Kd = 0.0;
+uint8_t multiP = 1;
+uint8_t multiI = 1;
+uint8_t multiD = 1;
+uint8_t Kpfinal;
+uint8_t Kifinal;
+uint8_t Kdfinal;
+int P;
+int I;
+int D;
+float Pvalue;
+float Ivalue;
+float Dvalue;
+
+const char* ssid = "LFMUS";
+const char* password = "rabarbar";
+AsyncUDP udp;
+
+Adafruit_NeoPixel statusPixel(1, RGB_BUILTIN, NEO_GRB + NEO_KHZ800);
+
+// --- Double Buffering for Logging ---
+#define LOG_BUFFER_SIZE 32768
+char logBufferA[LOG_BUFFER_SIZE];
+char logBufferB[LOG_BUFFER_SIZE];
+volatile char* activeBuffer = logBufferA;
+volatile char* writeBuffer = logBufferB;
+volatile size_t activeBufferPos = 0;
+volatile size_t writeBufferLen = 0;
+SemaphoreHandle_t bufferSwapMutex;
+volatile bool bufferReadyToWrite = false;
+volatile bool telemetryActive = false;
+volatile bool flushRequested = false;
+
+// --- SD Write Task ---
+void sdWriteTask(void* parameter) {
+	while (true) {
+		if (bufferReadyToWrite || flushRequested) {
+			xSemaphoreTake(bufferSwapMutex, portMAX_DELAY);
+			size_t len = writeBufferLen;
+			if (len > 0) {
+				File logFile = SD.open("/log.txt", FILE_APPEND);
+				if (logFile) {
+					const uint8_t* data = reinterpret_cast<const uint8_t*>(const_cast<char*>(writeBuffer));
+					logFile.write(data, len);
+					logFile.close();
+				} else {
+					Serial.println("Error opening log.txt");
+				}
+				writeBufferLen = 0;
+			}
+			bufferReadyToWrite = false;
+			flushRequested = false;
+			xSemaphoreGive(bufferSwapMutex);
+		}
+		vTaskDelay(pdMS_TO_TICKS(1));
+	}
+}
+
+// --- Telemetry Task: 400Hz ---
+void telemetryTask(void* parameter) {
+	const TickType_t xFrequency = pdMS_TO_TICKS(2); // 2ms = 500Hz
+	TickType_t xLastWakeTime = xTaskGetTickCount();
+	int skip = 0;
+	while (true) {
+		if (telemetryActive) {
+			if (skip < 4) {
+				telemetriaCleanBuffered();
+			}
+			skip = (skip + 1) % 5;
+		}
+		vTaskDelayUntil(&xLastWakeTime, xFrequency);
+	}
+}
+
+// --- Analog mux helpers for sensor array ---
+static inline void selectChannel(uint8_t channel) {
+	digitalWrite(MUX_S0, channel & 0x01);
+	digitalWrite(MUX_S1, (channel >> 1) & 0x01);
+	digitalWrite(MUX_S2, (channel >> 2) & 0x01);
+	digitalWrite(MUX_S3, (channel >> 3) & 0x01);
+}
+
+static inline uint16_t readSensorChannel(uint8_t channel) {
+	selectChannel(channel);
+	delayMicroseconds(5); // small settle time
+	return analogRead(MUX_SIG_PIN);
+}
+
+void telemetriaCleanBuffered() {
+	char line[128];
+	int len = 0;
+	int raw1 = encoder1.readAngle();
+	int raw2 = encoder2.readAngle();
+	len = snprintf(line, sizeof(line), "%lu %d %d\n", millis(), raw1, raw2);
+
+	xSemaphoreTake(bufferSwapMutex, portMAX_DELAY);
+	if (activeBufferPos + static_cast<size_t>(len) < LOG_BUFFER_SIZE) {
+		memcpy(reinterpret_cast<void*>(const_cast<char*>(activeBuffer) + activeBufferPos), line, len);
+		activeBufferPos += len;
+	} else {
+		// Buffer full, swap
+		char* temp = const_cast<char*>(activeBuffer);
+		activeBuffer = writeBuffer;
+		writeBuffer = temp;
+		writeBufferLen = activeBufferPos;
+		activeBufferPos = 0;
+		bufferReadyToWrite = true;
+		// Write new line to new buffer
+		memcpy(reinterpret_cast<void*>(const_cast<char*>(activeBuffer) + activeBufferPos), line, len);
+		activeBufferPos += len;
+	}
+	xSemaphoreGive(bufferSwapMutex);
+}
+
+void flushLogBuffer() {
+	xSemaphoreTake(bufferSwapMutex, portMAX_DELAY);
+	if (activeBufferPos > 0) {
+		// Swap and mark for write
+		char* temp = const_cast<char*>(activeBuffer);
+		activeBuffer = writeBuffer;
+		writeBuffer = temp;
+		writeBufferLen = activeBufferPos;
+		activeBufferPos = 0;
+		bufferReadyToWrite = true;
+		flushRequested = true;
+	}
+	xSemaphoreGive(bufferSwapMutex);
+}
+
+void setup() {
+	Serial.begin(115200);
+	bufferSwapMutex = xSemaphoreCreateMutex();
+
+	// Create the SD write task
+	xTaskCreatePinnedToCore(
+		sdWriteTask,
+		"SDWriteTask",
+		4096,
+		nullptr,
+		1,
+		nullptr,
+		1
+	);
+
+	// Create the telemetry task
+	xTaskCreatePinnedToCore(
+		telemetryTask,
+		"TelemetryTask",
+		4096,
+		nullptr,
+		1,
+		nullptr,
+		1
+	);
+
+	Wire.begin(I2C1_SDA, I2C1_SCL);
+	encoder1.begin();
+	encoder1.setDirection(AS5600_CLOCK_WISE);
+
+	I2C_2.begin(I2C2_SDA, I2C2_SCL);
+	encoder2.begin();
+	encoder2.setDirection(AS5600_COUNTERCLOCK_WISE);
+
+	if (encoder1.isConnected()) {
+		Serial.println("AS5600 #1 detected");
+	} else {
+		Serial.println("No communication with AS5600 #1!");
+		while (true) {
+			delay(1000);
+		}
+	}
+
+	if (encoder2.isConnected()) {
+		Serial.println("AS5600 #2 detected");
+	} else {
+		Serial.println("No communication with AS5600 #2!");
+		while (true) {
+			delay(1000);
+		}
+	}
+
+	// BMI160 disabled for now
+	// if (bmi160.softReset() != BMI160_OK) {
+	// 	Serial.println("BMI160 reset failed");
+	// 	while (true) {
+	// 		delay(1000);
+	// 	}
+	// }
+
+	// if (bmi160.I2cInit(i2c_addr) != BMI160_OK) {
+	// 	Serial.println("BMI160 initialization failed");
+	// 	while (true) {
+	// 		delay(1000);
+	// 	}
+	// }
+
+	statusPixel.begin();
+	statusPixel.setBrightness(RGB_BRIGHTNESS);
+	statusPixel.show();
+
+	// Analog mux / sensor array setup
+	pinMode(MUX_SIG_PIN, INPUT);
+	pinMode(MUX_S0, OUTPUT);
+	pinMode(MUX_S1, OUTPUT);
+	pinMode(MUX_S2, OUTPUT);
+	pinMode(MUX_S3, OUTPUT);
+
+	// Clear address lines
+	digitalWrite(MUX_S0, LOW);
+	digitalWrite(MUX_S1, LOW);
+	digitalWrite(MUX_S2, LOW);
+	digitalWrite(MUX_S3, LOW);
+
+	analogReadResolution(12);       // ESP32-S3 supports 12-bit ADC
+	analogSetAttenuation(ADC_11db); // ~0-3.3V range
+
+	pinMode(AIN1_PIN, OUTPUT);
+	pinMode(AIN2_PIN, OUTPUT);
+	pinMode(BIN1_PIN, OUTPUT);
+	pinMode(BIN2_PIN, OUTPUT);
+	pinMode(MODE_PIN, OUTPUT);
+	digitalWrite(MODE_PIN, HIGH);
+
+	delay(1000);
+	Serial.println("Initializing microSD card (SPI)...");
+
+	spiSD.begin(PIN_SCLK, PIN_MISO, PIN_MOSI, PIN_CS);
+	digitalWrite(PIN_CS, HIGH);
+	pinMode(PIN_CS, OUTPUT);
+
+	// Conservative 10 MHz SD clock for stability
+	if (!SD.begin(PIN_CS, spiSD, 10000000)) {
+		Serial.println("Failed to initialize SD card!");
+		while (true) {
+			delay(1000);
+		}
+	}
+	Serial.println("SD card ready.");
+
+	WiFi.softAP(ssid, password);
+
+	if (udp.listen(1234)) {
+		Serial.print("UDP Listening on IP: ");
+		Serial.println(WiFi.localIP());
+	}
+
+	udp.onPacket([](AsyncUDPPacket packet) {
+		char* tmpStr = static_cast<char*>(malloc(packet.length() + 1));
+		memcpy(tmpStr, packet.data(), packet.length());
+		tmpStr[packet.length()] = '\0';
+		String message = String(tmpStr);
+		message.trim(); // Strip trailing CR/LF from UDP payload
+		String msg = message;
+		msg.toLowerCase(); // Normalize for comparisons
+		String firstTwoLetters = msg.length() >= 2 ? msg.substring(0, 2) : msg;
+		free(tmpStr);
+		Serial.println(message);
+		if (msg == "cal") {
+			calibration();
+		}
+		if (msg == "reset") {
+			ESP.restart();
+		}
+		if (msg == "start") {
+			setStatusPixel(RGB_BRIGHTNESS, 0, RGB_BRIGHTNESS);
+			onoff = true;
+			// telemetryActive = true; // Disabled logging
+			Serial.println("Start command received");
+		}
+		if (msg == "stop") {
+			onoff = 0;
+			setStatusPixel(255, 159, 0);
+			
+			// telemetryActive = false; // Disabled logging
+			// Actively idle both motors: set MODE high, zero PWM, direction low
+			digitalWrite(MODE_PIN, HIGH);
+			analogWrite(AIN2_PIN, 0);
+			analogWrite(BIN2_PIN, 0);
+			digitalWrite(AIN1_PIN, LOW);
+			digitalWrite(BIN1_PIN, LOW);
+			I = 0;
+			lastError = 0;
+			lastErrorFiltered = 0.0f;
+			// flushLogBuffer(); // Disabled logging
+			Serial.println("Stop command received");
+		}
+		if (msg == "sensors") {
+			request_sensorsRaw();
+		}
+		if (msg == "params") {
+			request_params();
+		}
+		if (firstTwoLetters == "kp") {
+			String numericalPart = message.substring(4);
+			float numericalValue = numericalPart.toFloat();
+			Kp = numericalValue;
+			Serial.print("Kp set to: ");
+			Serial.println(Kp);
+		}
+		if (firstTwoLetters == "ki") {
+			String numericalPart = message.substring(4);
+			float numericalValue = numericalPart.toFloat();
+			Ki = numericalValue;
+			Serial.print("Ki set to: ");
+			Serial.println(Ki);
+		}
+		if (firstTwoLetters == "kd") {
+			String numericalPart = message.substring(4);
+			float numericalValue = numericalPart.toFloat();
+			Kd = numericalValue;
+			Serial.print("Kd set to: ");
+			Serial.println(Kd);
+		}
+		if (firstTwoLetters == "ma") {
+			String numericalPart = message.substring(4);
+			float numericalValue = numericalPart.toFloat();
+			maxspeedb = numericalValue;
+			maxspeeda = numericalValue;
+			Serial.print("MaxSpeed set to: ");
+			Serial.println(maxspeedb);
+		}
+		if (firstTwoLetters == "ba") {
+			String numericalPart = message.substring(4);
+			float numericalValue = numericalPart.toFloat();
+			basespeedb = numericalValue;
+			basespeeda = numericalValue;
+			Serial.print("BaseSpeed set to: ");
+			Serial.println(basespeedb);
+		}
+		if (firstTwoLetters == "tu") {
+			String numericalPart = message.substring(4);
+			float numericalValue = numericalPart.toFloat();
+			TurnSpeed = numericalValue;
+			Serial.print("TurnSpeed set to: ");
+			Serial.println(TurnSpeed);
+		}
+		if (firstTwoLetters == "th") {
+			String numericalPart = message.substring(4);
+			float numericalValue = numericalPart.toFloat();
+			threshold = numericalValue;
+			Serial.print("Threshold set to: ");
+			Serial.println(threshold);
+		}
+	});
+
+	delay(500);
+}
+
+void loop() {
+	if (onoff) {
+		digitalWrite(MODE_PIN, LOW);
+		robot_control();
+		
+	}
+	if (!onoff) {
+		digitalWrite(MODE_PIN, HIGH);
+		analogWrite(AIN2_PIN, 0);
+		analogWrite(BIN2_PIN, 0);
+		digitalWrite(AIN1_PIN, LOW);
+		digitalWrite(BIN1_PIN, LOW);
+		I = 0;
+		lastError = 0;
+		lastErrorFiltered = 0.0f;
+	}
+}
+
+void robot_control() {
+	float position = 0.0f;
+	uint8_t activeCount = 0;
+	bool hasLine = readLinePosition(position, activeCount);
+
+	const float centerPos = ((SensorCount - 1) * SENSOR_SPACING) / 2.0f; // symmetrical center
+	static bool filterInitialized = false;
+	if (!filterInitialized) {
+		filteredPosition = position;
+		filterInitialized = true;
+	}
+
+	// Low-pass filter the measured position to reduce noise
+	filteredPosition = filteredPosition + positionAlpha * (position - filteredPosition);
+
+	int error = static_cast<int>(filteredPosition - centerPos); // positive when line is to the right
+
+	// Deadband to avoid chattering around the center
+	if (abs(error) < errorDeadband) {
+		error = 0;
+	}
+
+	if (!hasLine) {
+		// No sensors above threshold: keep last steering via PID to hunt for the line
+		PID(error);
+		return;
+	}
+
+	PID(error);
+}
+
+bool readLinePosition(float& position, uint8_t& activeCount) {
+	uint32_t weightedSum = 0;
+	uint32_t totalWeight = 0;
+	activeCount = 0;
+
+	for (uint8_t ch = 0; ch < SensorCount; ++ch) {
+		uint16_t raw = readSensorChannel(ch);
+		sensorValues[ch] = raw;
+
+		uint16_t value = raw;
+		if (sensorsCalibrated) {
+			uint16_t minV = calibMin[ch];
+			uint16_t maxV = calibMax[ch];
+			if (maxV > minV + 1) {
+				uint32_t norm = static_cast<uint32_t>(raw - minV) * 1000U / static_cast<uint32_t>(maxV - minV);
+				if (norm > 1000U) {
+					norm = 1000U;
+				}
+				value = static_cast<uint16_t>(norm);
+			} else {
+				value = 0;
+			}
+		}
+
+		if (value > threshold) {
+			weightedSum += static_cast<uint32_t>(ch) * SENSOR_SPACING * value;
+			totalWeight += value;
+			++activeCount;
+		}
+	}
+
+	if (totalWeight > 0) {
+		position = static_cast<float>(weightedSum) / static_cast<float>(totalWeight);
+		return true;
+	}
+
+	position = 0.0f;
+	return false;
+}
+
+void PID(int error) {
+	P = error;
+	I += error;
+	// Simple anti-windup to keep integral from exploding and overcorrecting
+	const int I_LIMIT = 5000;
+	if (I > I_LIMIT) {
+		I = I_LIMIT;
+	}
+	if (I < -I_LIMIT) {
+		I = -I_LIMIT;
+	}
+	// Low-pass filtered derivative to avoid noise spikes
+	float dRaw = static_cast<float>(error - lastError);
+	lastErrorFiltered = lastErrorFiltered + dFilterAlpha * (dRaw - lastErrorFiltered);
+	D = static_cast<int>(lastErrorFiltered);
+	lastError = error;
+	Pvalue = (Kp / pow(10, multiP)) * P;
+	Ivalue = (Ki / pow(10, multiI)) * I;
+	Dvalue = (Kd / pow(10, multiD)) * D;
+
+	float motorspeed = Pvalue + Ivalue + Dvalue;
+	// Limit steering authority to avoid hard oscillations
+	motorspeed = constrain(motorspeed, -TurnSpeed, TurnSpeed);
+
+	float motorspeeda = basespeeda + motorspeed;
+	float motorspeedb = basespeedb - motorspeed;
+
+	if (motorspeeda > maxspeeda) {
+		motorspeeda = maxspeeda;
+	}
+	if (motorspeedb > maxspeedb) {
+		motorspeedb = maxspeedb;
+	}
+	if (motorspeeda < minspeeda) {
+		motorspeeda = minspeeda;
+	}
+	if (motorspeedb < minspeedb) {
+		motorspeedb = minspeedb;
+	}
+
+	speedcontrol(static_cast<int>(motorspeeda), static_cast<int>(motorspeedb));
+}
+
+void speedcontrol(int mota, int motb) {
+	if (mota >= 0 && motb >= 0) {
+		forward_brake(mota, motb);
+	}
+	if (mota < 0 && motb >= 0) {
+		mota = 0 - mota;
+		right_brake(mota, motb);
+	}
+	if (mota >= 0 && motb < 0) {
+		motb = 0 - motb;
+		left_brake(mota, motb);
+	}
+}
+
+void forward_brake(int posa, int posb) {
+	digitalWrite(AIN1_PIN, HIGH);
+	digitalWrite(BIN1_PIN, HIGH);
+	analogWrite(AIN2_PIN, posa);
+	analogWrite(BIN2_PIN, posb);
+}
+
+void left_brake(int posa, int posb) {
+	digitalWrite(AIN1_PIN, HIGH);
+	digitalWrite(BIN1_PIN, LOW);
+	analogWrite(AIN2_PIN, posa);
+	analogWrite(BIN2_PIN, posb);
+}
+
+void right_brake(int posa, int posb) {
+	digitalWrite(AIN1_PIN, LOW);
+	digitalWrite(BIN1_PIN, HIGH);
+	analogWrite(AIN2_PIN, posa);
+	analogWrite(BIN2_PIN, posb);
+}
+
+void calibration() {
+	// Collect min/max for each channel, similar to Pololu QTR calibrate()
+	setStatusPixel(RGB_BRIGHTNESS, 0, 0);
+
+	for (uint8_t i = 0; i < SensorCount; ++i) {
+		calibMin[i] = 4095; // ADC12 max
+		calibMax[i] = 0;
+	}
+
+	for (uint16_t pass = 0; pass < CalibrationSamples; ++pass) {
+		for (uint8_t ch = 0; ch < SensorCount; ++ch) {
+			uint16_t raw = readSensorChannel(ch);
+			if (raw < calibMin[ch]) {
+				calibMin[ch] = raw;
+			}
+			if (raw > calibMax[ch]) {
+				calibMax[ch] = raw;
+			}
+		}
+		delay(10); // longer pause to allow sweeping over the line
+	}
+
+	sensorsCalibrated = true;
+	threshold = CalibratedThresholdDefault; // normalized threshold (0-1000)
+
+	Serial.println("Calibration complete. Min/Max per sensor:");
+	for (uint8_t ch = 0; ch < SensorCount; ++ch) {
+		Serial.print("Ch ");
+		Serial.print(ch);
+		Serial.print(": ");
+		Serial.print(calibMin[ch]);
+		Serial.print(" - ");
+		Serial.println(calibMax[ch]);
+	}
+	Serial.print("Threshold set to normalized ");
+	Serial.println(threshold);
+
+	setStatusPixel(0, RGB_BRIGHTNESS, 0);
+}
+
+void setStatusPixel(uint8_t r, uint8_t g, uint8_t b) {
+	statusPixel.setPixelColor(0, statusPixel.Color(r, g, b));
+	statusPixel.show();
+}
+
+void request_sensorsRaw() {
+	String sensors = "Sensor ";
+	for (uint8_t i = 0; i < SensorCount; i++) {
+		sensors += String(sensorValues[i]) + " ";
+	}
+	udp.broadcast(sensors.c_str());
+}
+
+void request_params() {
+	String params = "Kp: " + String(Kp) + " Ki: " + String(Ki) + " Kd: " + String(Kd) + " Max: " + String(maxspeedb) + " Base: " + String(basespeedb) + " Turn: " + String(TurnSpeed) + " Lost_th: " + String(threshold);
+	udp.broadcast(params.c_str());
+}
+
+/*
+log.txt sample:
+65993 224 1568
+...
+*/
