@@ -53,7 +53,7 @@ void Motor_CalculateSpeed(motor_t *motor)
     delta *= motor->EncoderDirection;
 
     // Convert to RPM and MetersPerSecond
-    // N20 AB Hall encoder: 7 PPR (motor shaft) x 4 (quadrature edges) x 10 (gear ratio) = 280 CPR (wheel shaft)
+    // N20 AB Hall encoder: 7 PPR (motor shaft) x 2 A-edges (CHANGE ISR, A-only) x 10 (gear ratio) = 140 CPR (wheel shaft)
     // Matches ROBOT_ENCODER_COUNTS_PER_WHEEL_REV in robot_config.h
     // RPM = (delta / ENCODER_CPR) * (60.0f / dt_s)
     motor->RPM = ((float)delta / ROBOT_ENCODER_COUNTS_PER_WHEEL_REV) * (60.0f / ROBOT_CONTROL_DT_S);

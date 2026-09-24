@@ -46,6 +46,18 @@ volatile bool bufferReadyToWrite = false;
 volatile bool telemetryActive = false;
 volatile bool flushRequested = false;
 
+// SPI bus arbitration — IMU (Core 1, 1 kHz) and SD (Core 0) share SPI2.
+// A FreeRTOS binary semaphore is required instead of a plain volatile flag:
+// ESP32-S3 Xtensa LX7 cores each have private data caches; a volatile write
+// on Core 0 may not be seen by Core 1 until a cache-flush barrier occurs.
+// FreeRTOS xSemaphoreGive/Take include portMEMORY_BARRIER() and therefore
+// guarantee cross-core visibility without manual barrier instructions.
+//
+// Protocol:
+//   IMU read  → xSemaphoreTake(spiSem, 0)  // non-blocking, skip if SD busy
+//   SD ops    → xSemaphoreTake(spiSem, portMAX_DELAY) held for entire op
+SemaphoreHandle_t spiSem = NULL;
+
 // Helpers
 static void parseMessageValue(const String &message, float &outValue) {
     int spaceIndex = message.indexOf(' ');
@@ -64,15 +76,22 @@ void sdWriteTask(void *parameter) {
             bool doWrite = (len > 0);
             bufferReadyToWrite = false;
             flushRequested = false;
-            xSemaphoreGive(bufferSwapMutex); // <--- RELEASE MUTEX IMMEDIATELY!
+            xSemaphoreGive(bufferSwapMutex);
 
-            // Now perform slow SD I/O completely unlocked, so ControlLoopTask isn't blocked!
             if (doWrite) {
+                // Acquire SPI bus exclusively for the entire file operation.
+                // ControlLoopTask will skip IMU reads (use stale data) until released.
+                xSemaphoreTake(spiSem, portMAX_DELAY);
                 File logFile = SD.open("/GRUZIK.txt", FILE_APPEND);
                 if (logFile) {
                     logFile.write((const uint8_t *)writeBuffer, len);
                     logFile.close();
+                    Serial.println("[SD] write OK");
+                } else {
+                    Serial.println("[SD] ERROR: open /GRUZIK.txt failed");
                 }
+                xSemaphoreGive(spiSem);
+
                 xSemaphoreTake(bufferSwapMutex, portMAX_DELAY);
                 writeBufferLen = 0;
                 xSemaphoreGive(bufferSwapMutex);
@@ -127,7 +146,12 @@ void ControlLoopTask(void *parameter) {
         enc2_count = Encoder2_GetCount();
 
         // --- IMU: read gyro-Z (non-blocking SPI burst) ---
-        IMU_Read_GyroZ(&IMU);
+        // Non-blocking semaphore: if SD is using SPI bus, skip and use last value.
+        // xSemaphoreTake with timeout=0 never blocks, preserving 1 kHz loop timing.
+        if (xSemaphoreTake(spiSem, 0) == pdTRUE) {
+            IMU_Read_GyroZ(&IMU);
+            xSemaphoreGive(spiSem);
+        }
 
         // --- Non-blocking calibration: runs for first N ticks, then done ---
         if (IMU.calibrating) {
@@ -151,6 +175,14 @@ void ControlLoopTask(void *parameter) {
                         Motor_R.DistanceInMeasurement,
                         IMU.Gyro_Z,
                         ROBOT_CONTROL_DT_S);
+
+        // --- Online gyro bias correction — active when robot is stationary ---
+        if (fabsf(Motor_L.DistanceInMeasurement) < ROBOT_ENCODER_STATIONARY_M &&
+            fabsf(Motor_R.DistanceInMeasurement) < ROBOT_ENCODER_STATIONARY_M &&
+            fabsf(IMU.Gyro_Z) < ROBOT_GYRO_STATIONARY_DPS)
+        {
+            IMU_UpdateGyroZBias(&IMU, ROBOT_GYRO_BIAS_LEARN_RATE);
+        }
 
         // --- Main state machine ---
         if (GRUZIK.PowerMode == Start) {
@@ -246,6 +278,7 @@ void setup() {
 
     // --- SPI bus (shared by IMU and SD card) ---
     SPI.begin(PIN_SPI_SCK, PIN_SPI_MISO, PIN_SPI_MOSI, -1);
+    pinMode(PIN_SPI_MISO, INPUT_PULLUP); // Prevent MISO floating when IMU releases bus
 
     // --- IMU: BMI160 on SPI ---
     // IMU_Init uses delay() — acceptable here (setup(), before any task is started)
@@ -281,15 +314,30 @@ void setup() {
     // --- SD Card: shares SPI2 bus with the IMU (same SPI object, different CS) ---
     // spiSD(HSPI) must NOT be used here: HSPI.begin() would reroute GPIO11-13
     // to SPI3 in the GPIO matrix, permanently breaking IMU reads on SPI2.
+    //
+    // SD init sequence requirements (SD spec §6.4.1):
+    //   1. CS must be HIGH before first clock pulse (74+ dummy clocks with CS=H)
+    //   2. Identification mode: max 400 kHz
+    //   3. A short settling delay after IMU SPI activity helps the bus stabilize
+    pinMode(PIN_SD_CS, OUTPUT);
+    digitalWrite(PIN_SD_CS, HIGH);   // ensure CS is deasserted before SD.begin()
+    delay(10);                        // let bus settle after IMU SPI activity
     if (!SD.begin(PIN_SD_CS, SPI)) {
         Serial.println("[SD] init failed");
-    } else {
-        SdMapFile = SD.open(ROBOT_MAP_OUTPUT_FILE, FILE_WRITE);
     }
+    // NOTE: SdMapFile is NOT opened here intentionally.
+    // Log writes go through the double-buffer sdWriteTask (FILE_APPEND).
+    // SdMapFile is opened read-only in Map_BeginPlayback() for playback only.
+    // Opening it here would hold a file-handle slot permanently and cause
+    // undefined behaviour when SD.remove() is called during "mapping".
 
     // --- Load tuning params from NVS ---
     Load_Params(&GRUZIK, &GruzikMap);
     Load_Cal(&GRUZIK);
+
+    // --- Semaphore for SPI bus arbitration (IMU vs SD card) ---
+    spiSem = xSemaphoreCreateBinary();
+    xSemaphoreGive(spiSem);  // initially available
 
     // --- Mutex for double-buffer SD logging ---
     bufferSwapMutex = xSemaphoreCreateMutex();

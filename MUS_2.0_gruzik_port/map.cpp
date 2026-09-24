@@ -3,6 +3,7 @@
 #include "robot_config.h"
 
 extern LineFollower_t GRUZIK;
+extern SemaphoreHandle_t spiSem;
 File SdMapFile;
 
 static float clampf(float value, float min_value, float max_value)
@@ -39,7 +40,7 @@ static float LineConfidence(const LineFollower_t *LF)
     return confidence;
 }
 
-static uint8_t ReadMapLine(Map_t *map)
+static uint8_t ReadMapLine_Unlocked(Map_t *map)
 {
     char line[96];
 
@@ -51,6 +52,7 @@ static uint8_t ReadMapLine(Map_t *map)
         while (i < (uint8_t)(sizeof(line) - 1u))
         {
             sample = SdMapFile.read();
+
             if (sample < 0) {
                 // If we reach EOF, close the file
                 SdMapFile.close();
@@ -84,8 +86,15 @@ static uint8_t ReadMapLine(Map_t *map)
             map->SetSpeed = map->DefaultPlaybackSpeed;
         }
 
-        return 1u;
     }
+}
+
+static uint8_t ReadMapLine(Map_t *map)
+{
+    xSemaphoreTake(spiSem, portMAX_DELAY);
+    uint8_t result = ReadMapLine_Unlocked(map);
+    xSemaphoreGive(spiSem);
+    return result;
 }
 
 static uint8_t AdvanceMapTarget(Map_t *map)
@@ -137,7 +146,7 @@ void Map_Reset(Map_t *map)
     map->p = p;
     map->i = i;
     map->d = d;
-    map->DefaultPlaybackSpeed = (default_speed > 0.0f) ? default_speed : 80.0f;
+    map->DefaultPlaybackSpeed = (default_speed > 0.0f) ? default_speed : 1.0f;
 }
 
 uint8_t Map_BeginPlayback(Map_t *map)
@@ -157,7 +166,7 @@ uint8_t Map_BeginPlayback(Map_t *map)
     }
     if (!SdMapFile) return 0u;
 
-    if (ReadMapLine(map) == 0u) {
+    if (ReadMapLine_Unlocked(map) == 0u) {
         SdMapFile.close();
         return 0u;
     }

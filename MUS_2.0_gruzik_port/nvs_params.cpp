@@ -27,7 +27,7 @@ void Load_Params(LineFollower_t *LF, Map_t *map)
     map->p = preferences.getFloat("map_p", 0.8f);
     map->i = preferences.getFloat("map_i", 0.0f);
     map->d = preferences.getFloat("map_d", 0.2f);
-    map->DefaultPlaybackSpeed = preferences.getFloat("map_speed", 80.0f);
+    map->DefaultPlaybackSpeed = preferences.getFloat("map_speed", 1.0f);
 
     preferences.end();
 }

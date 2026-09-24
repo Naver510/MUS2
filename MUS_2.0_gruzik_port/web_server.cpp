@@ -22,6 +22,7 @@ extern Map_t GruzikMap;
 extern Odometry_t Odometry;
 
 extern volatile bool telemetryActive;
+extern SemaphoreHandle_t spiSem;
 
 AsyncWebServer server(80);
 AsyncWebSocket ws("/ws");
@@ -54,7 +55,9 @@ void onEvent(AsyncWebSocket *server, AsyncWebSocketClient *client,
           telemetryActive = false;
           extern void flushLogBuffer();
           flushLogBuffer();
+          xSemaphoreTake(spiSem, portMAX_DELAY);
           if (SdMapFile) SdMapFile.close();
+          xSemaphoreGive(spiSem);
         } else if (strcmp(action, "force_fwd") == 0)
           GRUZIK.PowerMode = ForceForward;
         else if (strcmp(action, "mapping") == 0) {
@@ -63,16 +66,24 @@ void onEvent(AsyncWebSocket *server, AsyncWebSocketClient *client,
           Map_Reset(&GruzikMap);
           GruzikMap.Mapping = 1;
           telemetryActive = true;
-          // Clear previous map file from SD so it doesn't append indefinitely
+          // Close any leftover read-handle from a previous playback before
+          // removing the file — SD.remove() on an open handle is undefined.
+          xSemaphoreTake(spiSem, portMAX_DELAY);
+          if (SdMapFile) SdMapFile.close();
           SD.remove(ROBOT_MAP_OUTPUT_FILE);
+          xSemaphoreGive(spiSem);
         } else if (strcmp(action, "unmapping") == 0) {
           GRUZIK.state = UnMapping;
           GRUZIK.PowerMode = Start;
+          xSemaphoreTake(spiSem, portMAX_DELAY);
           Map_BeginPlayback(&GruzikMap);
+          xSemaphoreGive(spiSem);
         } else if (strcmp(action, "speedunmapping") == 0) {
           GRUZIK.state = SpeedUnMapping;
           GRUZIK.PowerMode = Start;
+          xSemaphoreTake(spiSem, portMAX_DELAY);
           Map_BeginPlayback(&GruzikMap);
+          xSemaphoreGive(spiSem);
         }
       } else if (strcmp(msgType, "debug_cmd") == 0) {
         const char *action = doc["action"];
