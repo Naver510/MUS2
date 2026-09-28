@@ -52,38 +52,46 @@ void onEvent(AsyncWebSocket *server, AsyncWebSocketClient *client,
           GRUZIK.state = PidFollowing;
         } else if (strcmp(action, "stop") == 0) {
           GRUZIK.PowerMode = Stop;
-          telemetryActive = false;
-          extern void flushLogBuffer();
-          flushLogBuffer();
+          extern void requestTelemetryFlush();
+          requestTelemetryFlush();
           xSemaphoreTake(spiSem, portMAX_DELAY);
           if (SdMapFile) SdMapFile.close();
           xSemaphoreGive(spiSem);
         } else if (strcmp(action, "force_fwd") == 0)
           GRUZIK.PowerMode = ForceForward;
         else if (strcmp(action, "mapping") == 0) {
-          GRUZIK.state = Mapping;
-          GRUZIK.PowerMode = Start;
-          Map_Reset(&GruzikMap);
-          GruzikMap.Mapping = 1;
-          telemetryActive = true;
-          // Close any leftover read-handle from a previous playback before
-          // removing the file — SD.remove() on an open handle is undefined.
+          // SD cleanup while IMU is not using the bus (PowerMode still Stop)
           xSemaphoreTake(spiSem, portMAX_DELAY);
           if (SdMapFile) SdMapFile.close();
-          SD.remove(ROBOT_MAP_OUTPUT_FILE);
+          if (SD.exists(ROBOT_MAP_OUTPUT_FILE)) {
+              SD.remove(ROBOT_MAP_OUTPUT_FILE);
+          }
           xSemaphoreGive(spiSem);
+
+          // Prepare mapping state and reset telemetry buffer
+          Map_Reset(&GruzikMap);
+          GruzikMap.Mapping = 1;
+          extern volatile size_t telemetryBufferPos;
+          extern volatile uint32_t droppedPoints;
+          telemetryBufferPos = 0;
+          droppedPoints = 0;
+          telemetryActive = true;
+
+          // Start driving (IMU reads begin, no SD access until stop)
+          GRUZIK.state = Mapping;
+          GRUZIK.PowerMode = Start;
         } else if (strcmp(action, "unmapping") == 0) {
+          xSemaphoreTake(spiSem, portMAX_DELAY);
+          Map_BeginPlayback(&GruzikMap);
+          xSemaphoreGive(spiSem);
           GRUZIK.state = UnMapping;
           GRUZIK.PowerMode = Start;
+        } else if (strcmp(action, "speedunmapping") == 0) {
           xSemaphoreTake(spiSem, portMAX_DELAY);
           Map_BeginPlayback(&GruzikMap);
           xSemaphoreGive(spiSem);
-        } else if (strcmp(action, "speedunmapping") == 0) {
           GRUZIK.state = SpeedUnMapping;
           GRUZIK.PowerMode = Start;
-          xSemaphoreTake(spiSem, portMAX_DELAY);
-          Map_BeginPlayback(&GruzikMap);
-          xSemaphoreGive(spiSem);
         }
       } else if (strcmp(msgType, "debug_cmd") == 0) {
         const char *action = doc["action"];

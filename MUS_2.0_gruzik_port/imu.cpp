@@ -1,6 +1,8 @@
 #include "imu.h"
 #include "robot_config.h"
 
+extern SPIClass spiIMU;
+
 // BMI160 Registers (all offsets from datasheet Table 25)
 #define BMI160_REG_CHIPID      0x00
 #define BMI160_REG_PMU_STATUS  0x03
@@ -18,21 +20,21 @@
 // ---------------------------------------------------------------------------
 
 static void writeReg(int cs_pin, uint8_t reg, uint8_t val) {
-    SPI.beginTransaction(SPISettings(1000000, MSBFIRST, SPI_MODE0)); // BMI160: CPOL=0, CPHA=0
+    spiIMU.beginTransaction(SPISettings(1000000, MSBFIRST, SPI_MODE0)); // BMI160: CPOL=0, CPHA=0
     digitalWrite(cs_pin, LOW);
-    SPI.transfer(reg & 0x7F);   // MSB=0 → write
-    SPI.transfer(val);
+    spiIMU.transfer(reg & 0x7F);   // MSB=0 → write
+    spiIMU.transfer(val);
     digitalWrite(cs_pin, HIGH);
-    SPI.endTransaction();
+    spiIMU.endTransaction();
 }
 
 static uint8_t readReg(int cs_pin, uint8_t reg) {
-    SPI.beginTransaction(SPISettings(1000000, MSBFIRST, SPI_MODE0)); // BMI160: CPOL=0, CPHA=0
+    spiIMU.beginTransaction(SPISettings(1000000, MSBFIRST, SPI_MODE0)); // BMI160: CPOL=0, CPHA=0
     digitalWrite(cs_pin, LOW);
-    SPI.transfer(reg | 0x80);   // MSB=1 → read
-    uint8_t val = SPI.transfer(0x00);
+    spiIMU.transfer(reg | 0x80);   // MSB=1 → read
+    uint8_t val = spiIMU.transfer(0x00);
     digitalWrite(cs_pin, HIGH);
-    SPI.endTransaction();
+    spiIMU.endTransaction();
     return val;
 }
 
@@ -77,13 +79,13 @@ uint8_t IMU_Read_GyroZ(IMU_t *imu)
 {
     if (!imu->initialized) return 0;
 
-    SPI.beginTransaction(SPISettings(1000000, MSBFIRST, SPI_MODE0));
+    spiIMU.beginTransaction(SPISettings(1000000, MSBFIRST, SPI_MODE0));
     digitalWrite(imu->cs_pin, LOW);
-    SPI.transfer(BMI160_REG_DATA_GYRO_Z | 0x80);  // read burst from 0x16
-    uint8_t zl = SPI.transfer(0x00);               // GYRO_Z_L
-    uint8_t zh = SPI.transfer(0x00);               // GYRO_Z_H
+    spiIMU.transfer(BMI160_REG_DATA_GYRO_Z | 0x80);  // read burst from 0x16
+    uint8_t zl = spiIMU.transfer(0x00);               // GYRO_Z_L
+    uint8_t zh = spiIMU.transfer(0x00);               // GYRO_Z_H
     digitalWrite(imu->cs_pin, HIGH);
-    SPI.endTransaction();
+    spiIMU.endTransaction();
 
     int16_t gz = (int16_t)((zh << 8) | zl);
 

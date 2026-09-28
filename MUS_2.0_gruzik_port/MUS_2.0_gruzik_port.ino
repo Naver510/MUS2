@@ -29,22 +29,21 @@ IMU_t IMU;
 static volatile int32_t enc1_count = 0;
 static volatile int32_t enc2_count = 0;
 
-// Note: SD card shares the main SPI bus (SPI2) with the IMU.
-// Using a separate SPIClass(HSPI) would reconfigure the GPIO matrix to SPI3,
-// silently disconnecting the IMU from the bus — do NOT add spiSD(HSPI).
+// Note: IMU now uses a dedicated hardware SPI bus (HSPI).
+// The SD card remains on the primary SPI bus (FSPI).
+SPIClass spiIMU(HSPI);
 
-// SD Card logging double buffering
-#define LOG_BUFFER_SIZE 32768
-char logBufferA[LOG_BUFFER_SIZE];
-char logBufferB[LOG_BUFFER_SIZE];
-volatile char *activeBuffer = logBufferA;
-volatile char *writeBuffer = logBufferB;
-volatile size_t activeBufferPos = 0;
-volatile size_t writeBufferLen = 0;
-SemaphoreHandle_t bufferSwapMutex;
-volatile bool bufferReadyToWrite = false;
+// Telemetry log: single buffer in PSRAM, flushed to SD only when robot stops.
+// During active driving only the IMU uses SPI; the SD card stays completely
+// idle, eliminating the bus-contention errors that corrupt the SD state machine.
+// After stop, IMU reads are gated off and SD has exclusive SPI access.
+#define TELEMETRY_RAM_SIZE (512u * 1024u)  // 512 KB — ~5 min of mapping at 25 rec/s
+char *telemetryBuffer = NULL;
+size_t telemetryBufferCapacity = 0;
+volatile size_t telemetryBufferPos = 0;
 volatile bool telemetryActive = false;
-volatile bool flushRequested = false;
+volatile bool sdFlushRequested = false;
+volatile uint32_t droppedPoints = 0; // diagnostic counter for dropped records
 
 // SPI bus arbitration — IMU (Core 1, 1 kHz) and SD (Core 0) share SPI2.
 // A FreeRTOS binary semaphore is required instead of a plain volatile flag:
@@ -68,70 +67,71 @@ static void parseMessageValue(const String &message, float &outValue) {
     }
 }
 
+// NOTE: sdReinit() (SD.end + SD.begin) was removed.
+// SD.end() calls spi_bus_remove_device() which permanently tears down the
+// ESP-IDF SPI device handle; subsequent SD.begin() fails consistently after
+// any IMU activity on the shared bus.  The card is mounted once at boot and
+// stays mounted.  Flush uses SD.open() directly — it works because IMU reads
+// are gated off (PowerMode == Stop) before sdWriteTask runs the flush.
+
 void sdWriteTask(void *parameter) {
     while (true) {
-        if (bufferReadyToWrite || flushRequested) {
-            xSemaphoreTake(bufferSwapMutex, portMAX_DELAY);
-            size_t len = writeBufferLen;
-            bool doWrite = (len > 0);
-            bufferReadyToWrite = false;
-            flushRequested = false;
-            xSemaphoreGive(bufferSwapMutex);
-
-            if (doWrite) {
-                // Acquire SPI bus exclusively for the entire file operation.
-                // ControlLoopTask will skip IMU reads (use stale data) until released.
+        if (sdFlushRequested && telemetryBuffer != NULL) {
+            // At this point telemetryActive is already false — ControlLoopTask
+            // is no longer writing to the buffer.  PowerMode is Stop (or
+            // mapping auto-closed) so IMU reads are gated off (see ControlLoopTask
+            // gate: `if (IMU.calibrating || GRUZIK.PowerMode == Start)`).  The
+            // SPI bus belongs exclusively to this task — no reinit needed.
+            size_t len = telemetryBufferPos;
+            if (len > 0) {
                 xSemaphoreTake(spiSem, portMAX_DELAY);
-                File logFile = SD.open("/GRUZIK.txt", FILE_APPEND);
+                File logFile = SD.open(ROBOT_MAP_OUTPUT_FILE, FILE_APPEND);
                 if (logFile) {
-                    logFile.write((const uint8_t *)writeBuffer, len);
+                    // Write in 4 KB chunks to avoid watchdog timeout
+                    const size_t CHUNK = 4096;
+                    size_t written = 0;
+                    while (written < len) {
+                        size_t n = (len - written < CHUNK) ? (len - written) : CHUNK;
+                        logFile.write((const uint8_t *)(telemetryBuffer + written), n);
+                        written += n;
+                    }
                     logFile.close();
-                    Serial.println("[SD] write OK");
+                    Serial.printf("[SD] Flushed %u bytes OK (dropped %u)\n",
+                                  (unsigned)len, (unsigned)droppedPoints);
+                    telemetryBufferPos = 0;  // only reset on success
                 } else {
-                    Serial.println("[SD] ERROR: open /GRUZIK.txt failed");
+                    Serial.println("[SD] ERROR: open " ROBOT_MAP_OUTPUT_FILE " failed");
+                    // Buffer NOT reset — data preserved for next attempt
                 }
                 xSemaphoreGive(spiSem);
-
-                xSemaphoreTake(bufferSwapMutex, portMAX_DELAY);
-                writeBufferLen = 0;
-                xSemaphoreGive(bufferSwapMutex);
+            } else {
+                Serial.println("[SD] Flush requested but buffer empty");
             }
+            sdFlushRequested = false;
         }
-        vTaskDelay(pdMS_TO_TICKS(50));
+        vTaskDelay(pdMS_TO_TICKS(100));
     }
 }
 
-void flushLogBuffer() {
-    xSemaphoreTake(bufferSwapMutex, portMAX_DELAY);
-    if (activeBufferPos > 0) {
-        volatile char *temp = activeBuffer;
-        activeBuffer = writeBuffer;
-        writeBuffer = temp;
-        writeBufferLen = activeBufferPos;
-        activeBufferPos = 0;
-        flushRequested = true;
-    }
-    xSemaphoreGive(bufferSwapMutex);
+// Signal sdWriteTask to flush the PSRAM buffer to SD.
+// Safe to call from any context — just sets two volatile flags.
+void requestTelemetryFlush() {
+    telemetryActive  = false;
+    sdFlushRequested = true;
 }
 
+// Append a telemetry record to the PSRAM buffer.
+// Called exclusively from ControlLoopTask (Core 1) — no mutex needed.
 void telemetryLog(const char* data) {
-    if (!telemetryActive) return;
+    if (!telemetryActive || telemetryBuffer == NULL) return;
     size_t len = strlen(data);
-    xSemaphoreTake(bufferSwapMutex, portMAX_DELAY);
-    if (activeBufferPos + len < LOG_BUFFER_SIZE) {
-        memcpy((void *)(activeBuffer + activeBufferPos), data, len);
-        activeBufferPos += len;
+    size_t pos = telemetryBufferPos;
+    if (pos + len < telemetryBufferCapacity) {
+        memcpy(telemetryBuffer + pos, data, len);
+        telemetryBufferPos = pos + len;
     } else {
-        volatile char *temp = activeBuffer;
-        activeBuffer = writeBuffer;
-        writeBuffer = temp;
-        writeBufferLen = activeBufferPos;
-        activeBufferPos = 0;
-        bufferReadyToWrite = true;
-        memcpy((void *)(activeBuffer + activeBufferPos), data, len);
-        activeBufferPos += len;
+        droppedPoints++;
     }
-    xSemaphoreGive(bufferSwapMutex);
 }
 
 void ControlLoopTask(void *parameter) {
@@ -146,11 +146,10 @@ void ControlLoopTask(void *parameter) {
         enc2_count = Encoder2_GetCount();
 
         // --- IMU: read gyro-Z (non-blocking SPI burst) ---
-        // Non-blocking semaphore: if SD is using SPI bus, skip and use last value.
-        // xSemaphoreTake with timeout=0 never blocks, preserving 1 kHz loop timing.
-        if (xSemaphoreTake(spiSem, 0) == pdTRUE) {
+        // Only access SPI for IMU when actively driving or during calibration.
+        if (IMU.calibrating || GRUZIK.PowerMode == Start) {
+            // IMU is on its own dedicated SPI bus — no semaphore needed!
             IMU_Read_GyroZ(&IMU);
-            xSemaphoreGive(spiSem);
         }
 
         // --- Non-blocking calibration: runs for first N ticks, then done ---
@@ -193,8 +192,7 @@ void ControlLoopTask(void *parameter) {
                 float avgSpeed = 0.5f * (Motor_L.MetersPerSecond + Motor_R.MetersPerSecond);
                 if (MapUpdate(&GruzikMap, &Odometry.pose, avgSpeed, GRUZIK.P, GRUZIK.D) == 0) {
                     GRUZIK.state = PidFollowing;
-                    telemetryActive = false;
-                    flushLogBuffer();
+                    requestTelemetryFlush();
                 }
             } else if (GRUZIK.state == UnMapping) {
                 if (DriveOnMap(&GruzikMap, &Odometry.pose) == 0) {
@@ -276,22 +274,40 @@ void setup() {
     pinMode(PIN_MODE, OUTPUT);
     digitalWrite(PIN_MODE, LOW); // IN/IN Mode for DRV8835
 
-    // --- SPI bus (shared by IMU and SD card) ---
+    // --- Main SPI bus (for SD card only now) ---
     SPI.begin(PIN_SPI_SCK, PIN_SPI_MISO, PIN_SPI_MOSI, -1);
-    pinMode(PIN_SPI_MISO, INPUT_PULLUP); // Prevent MISO floating when IMU releases bus
+    
+    // --- IMU SPI bus (HSPI) ---
+    spiIMU.begin(PIN_IMU_SCK, PIN_IMU_MISO, PIN_IMU_MOSI, -1);
+    pinMode(PIN_IMU_MISO, INPUT_PULLUP); // Prevent MISO floating when IMU releases bus
 
-    // --- IMU: BMI160 on SPI ---
+    // --- SD Card: MUST be initialized FIRST on clean SPI bus ---
+    // The old code used a dedicated HSPI (SPI3) bus for SD with no prior traffic.
+    // In this shared-bus design (both IMU and SD on SPI2), IMU_Init's SPI
+    // transactions leave the bus in a state that prevents SD.begin()'s CMD0
+    // from getting a response.  Initializing SD first on a pristine bus works.
+    // spiSD(HSPI) cannot be used: HSPI.begin() would reroute GPIO11-13
+    // to SPI3 in the GPIO matrix, breaking IMU reads on SPI2.
+    pinMode(PIN_SD_CS, OUTPUT);
+    digitalWrite(PIN_SD_CS, HIGH);   // ensure CS is deasserted before SD.begin()
+    delay(10);
+    if (!SD.begin(PIN_SD_CS, SPI)) {
+        Serial.println("[SD] *** INIT FAILED *** -- check card/wiring");
+    } else {
+        Serial.printf("[SD] init OK  type=%d  size=%lluMB\n",
+                      (int)SD.cardType(),
+                      (unsigned long long)(SD.cardSize() / (1024ULL * 1024ULL)));
+    }
+
+    // --- IMU: BMI160 on SPI (after SD init to avoid bus pollution) ---
     // IMU_Init uses delay() — acceptable here (setup(), before any task is started)
     if (!IMU_Init(&IMU, PIN_IMU_CS)) {
-        Serial.println("[IMU] Init failed — gyro will be unavailable");
+        Serial.println("[IMU] Init failed -- gyro will be unavailable");
     }
-    // Gyro-Z bias calibration is non-blocking: accumulates IMU_CAL_SAMPLES
-    // readings in ControlLoopTask at 1 kHz.  Robot must be stationary at boot.
-    IMU_StartCalibration(&IMU, 500); // 500 ms at 1 kHz, no delay()
 
-    // --- Encoders: 2× SW-ISR (A-only CHANGE) on GPIO6 (ENC1) and GPIO8 (ENC2) ---
-    // B pins are read inside the A ISR for direction only. CPR=140 (7PPR×2×10).
-    // 4× (A+B ISR) causes cancellation at high RPM due to FreeRTOS ISR latency.
+    // --- Encoders: 2x SW-ISR (A-only CHANGE) on GPIO6 (ENC1) and GPIO8 (ENC2) ---
+    // B pins are read inside the A ISR for direction only. CPR=140 (7PPRx2x10).
+    // 4x (A+B ISR) causes cancellation at high RPM due to FreeRTOS ISR latency.
     Encoders_Init();
     Encoders_Reset();
 
@@ -311,25 +327,16 @@ void setup() {
     // --- Odometry ---
     Odometry_Init(&Odometry, ROBOT_ODOMETRY_GYRO_WEIGHT);
 
-    // --- SD Card: shares SPI2 bus with the IMU (same SPI object, different CS) ---
-    // spiSD(HSPI) must NOT be used here: HSPI.begin() would reroute GPIO11-13
-    // to SPI3 in the GPIO matrix, permanently breaking IMU reads on SPI2.
-    //
-    // SD init sequence requirements (SD spec §6.4.1):
-    //   1. CS must be HIGH before first clock pulse (74+ dummy clocks with CS=H)
-    //   2. Identification mode: max 400 kHz
-    //   3. A short settling delay after IMU SPI activity helps the bus stabilize
-    pinMode(PIN_SD_CS, OUTPUT);
-    digitalWrite(PIN_SD_CS, HIGH);   // ensure CS is deasserted before SD.begin()
-    delay(10);                        // let bus settle after IMU SPI activity
-    if (!SD.begin(PIN_SD_CS, SPI)) {
-        Serial.println("[SD] init failed");
-    }
     // NOTE: SdMapFile is NOT opened here intentionally.
-    // Log writes go through the double-buffer sdWriteTask (FILE_APPEND).
     // SdMapFile is opened read-only in Map_BeginPlayback() for playback only.
     // Opening it here would hold a file-handle slot permanently and cause
     // undefined behaviour when SD.remove() is called during "mapping".
+
+    // --- Gyro-Z bias calibration (non-blocking, in ControlLoopTask) ---
+    // Runs at 1 kHz for 500 ms.  During calibration the IMU reads happen on
+    // Core 1 but nobody accesses SD (no mapping/flush requested yet), so there
+    // is no SPI bus contention.  Robot must be stationary at boot.
+    IMU_StartCalibration(&IMU, 500);
 
     // --- Load tuning params from NVS ---
     Load_Params(&GRUZIK, &GruzikMap);
@@ -339,8 +346,23 @@ void setup() {
     spiSem = xSemaphoreCreateBinary();
     xSemaphoreGive(spiSem);  // initially available
 
-    // --- Mutex for double-buffer SD logging ---
-    bufferSwapMutex = xSemaphoreCreateMutex();
+    // --- Telemetry buffer in PSRAM (ESP32-S3 N16R2 has 2 MB) ---
+    // Data is accumulated in RAM during the run and flushed to SD only on stop.
+    telemetryBuffer = (char *)ps_malloc(TELEMETRY_RAM_SIZE);
+    if (telemetryBuffer) {
+        telemetryBufferCapacity = TELEMETRY_RAM_SIZE;
+        Serial.printf("[TEL] PSRAM buffer: %u KB\n", TELEMETRY_RAM_SIZE / 1024);
+    } else {
+        // Fallback: try regular heap with a smaller buffer
+        telemetryBufferCapacity = 32768;
+        telemetryBuffer = (char *)malloc(telemetryBufferCapacity);
+        if (telemetryBuffer) {
+            Serial.printf("[TEL] Heap fallback: %u KB\n",
+                          (unsigned)(telemetryBufferCapacity / 1024));
+        } else {
+            Serial.println("[TEL] ERROR: no memory for telemetry buffer!");
+        }
+    }
 
     // --- WebServer ---
     WebServer_Init();

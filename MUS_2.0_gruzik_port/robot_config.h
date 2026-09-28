@@ -18,7 +18,12 @@
 #define PIN_SPI_MOSI 11
 #define PIN_SPI_SCK 12
 #define PIN_SPI_MISO 13
-#define PIN_IMU_CS 14
+#define PIN_SD_CS 20
+
+#define PIN_IMU_MOSI 39
+#define PIN_IMU_MISO 40
+#define PIN_IMU_SCK 41
+#define PIN_IMU_CS 42
 
 #define PIN_ENC1_A 6
 #define PIN_ENC1_B 7
@@ -30,7 +35,6 @@
 #define PIN_AIN2 17
 #define PIN_AIN1 18
 
-#define PIN_SD_CS 20
 #define PIN_MODE 21
 
 // Hardware Constants
