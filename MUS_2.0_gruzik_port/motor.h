@@ -21,6 +21,11 @@ typedef struct
     float RPM;
     float PreviousRPM;
 
+    // Liczba tikow, w ktorych delta enkodera przekroczyla fizyczny limit (3000 RPM)
+    // i zostala przycieta (glitch odczytu). Do diagnostyki w logu.
+    volatile uint32_t glitch_count;
+    uint32_t glitch_last_print_ms;
+
     float MetersPerSecond;
     float PreviousMetersSecond;
     float DistanceInMeasurement;

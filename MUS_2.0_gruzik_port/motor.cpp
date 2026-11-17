@@ -40,6 +40,12 @@ static float clampf(float value, float min_value, float max_value)
     return value;
 }
 
+// Maksymalna sensowna delta enkodera na jeden tik kontrolny, odpowiadajaca limitowi 3000 RPM
+// (ten sam limit, ktory wczesniej byl tylko dla RPM). Liczone w czasie kompilacji:
+// 3000 * 140 * 0.001 / 60 = 7 zliczen/tik.
+static constexpr int32_t MOTOR_MAX_ENCODER_DELTA =
+    (int32_t)(3000.0f * ROBOT_ENCODER_COUNTS_PER_WHEEL_REV * ROBOT_CONTROL_DT_S / 60.0f);
+
 void Motor_CalculateSpeed(motor_t *motor)
 {
     if (!motor->encoder_count) return;
@@ -52,16 +58,26 @@ void Motor_CalculateSpeed(motor_t *motor)
     // Apply direction
     delta *= motor->EncoderDirection;
 
+    // Ochrona przed skokowym bledem odczytu enkodera: przycinamy delte do +/- max
+    // (nie zerujemy i nie podmieniamy na poprzednia - zachowuje kierunek i realny ruch,
+    // odrzuca tylko fizycznie niemozliwy nadmiar). Ta sama delta idzie do RPM i dystansu.
+    if (delta > MOTOR_MAX_ENCODER_DELTA || delta < -MOTOR_MAX_ENCODER_DELTA) {
+        delta = (delta > 0) ? MOTOR_MAX_ENCODER_DELTA : -MOTOR_MAX_ENCODER_DELTA;
+        motor->glitch_count++;
+        // Log ograniczony do max. 1 wpisu na sekunde, zeby nie blokowac petli 1 kHz.
+        uint32_t now_ms = millis();
+        if (now_ms - motor->glitch_last_print_ms >= 1000u) {
+            motor->glitch_last_print_ms = now_ms;
+            Serial.printf("[MOTOR] encoder glitch clamped, total=%u\n", (unsigned)motor->glitch_count);
+        }
+    }
+
     // Convert to RPM and MetersPerSecond
     // N20 AB Hall encoder: 7 PPR (motor shaft) x 2 A-edges (CHANGE ISR, A-only) x 10 (gear ratio) = 140 CPR (wheel shaft)
     // Matches ROBOT_ENCODER_COUNTS_PER_WHEEL_REV in robot_config.h
     // RPM = (delta / ENCODER_CPR) * (60.0f / dt_s)
     motor->RPM = ((float)delta / ROBOT_ENCODER_COUNTS_PER_WHEEL_REV) * (60.0f / ROBOT_CONTROL_DT_S);
-    
-    if (motor->RPM > 3000.0f || motor->RPM < -3000.0f) {
-        motor->RPM = motor->PreviousRPM;
-    }
-    
+
     LowPassFilter_Update(&motor->EncoderRpmFilter, motor->RPM);
     motor->PreviousRPM = motor->EncoderRpmFilter.output;
 
