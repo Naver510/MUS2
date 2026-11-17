@@ -20,7 +20,10 @@ class CanvasView:
         self.on_transform_changed = on_transform_changed
         self.on_reference_finished = on_reference_finished
 
-        self.robot = []        # surowe punkty robota (świat, m)
+        self.robot = []        # aktywna trasa robota (świat, m)
+        self.robot_line = []   # ślad linii po kompensacji listwy (128 mm)
+        self.robot_axle = []   # środek obrotu robota (x_ri, y_ri)
+        self.compensate_sensor = True
         self.speeds = []       # prędkości punktów robota [m/s] (puste = brak heatmapy)
         self.heatmap = True
         self.show_wheels = False
@@ -60,6 +63,23 @@ class CanvasView:
         return self.cam_x + (px - cx) / self.cam_scale, self.cam_y - (py - cy) / self.cam_scale
 
     # ---------- dane ----------
+    def _sync_active_robot(self):
+        if self.compensate_sensor or not self.robot_axle:
+            self.robot = self.robot_line
+        else:
+            self.robot = self.robot_axle
+
+    def set_robot_data(self, line_pts, axle_pts, speeds):
+        self.robot_line = list(line_pts)
+        self.robot_axle = list(axle_pts)
+        self.speeds = list(speeds)
+        self._sync_active_robot()
+
+    def set_compensate(self, enabled):
+        self.compensate_sensor = bool(enabled)
+        self._sync_active_robot()
+        self.redraw()
+
     def transformed_robot(self):
         t = self.t
         return apply_transform(self.robot, (t["offset_x"], t["offset_y"]),
@@ -68,14 +88,12 @@ class CanvasView:
     def wheel_tracks(self):
         """Zwraca (lewe, prawe) trasy kół po transformacji nakładki.
 
-        Założenie: plik nie ma kursu, więc kurs liczę ze stycznej do trasy robota
-        (różnica punktów i-2..i+2); gdy robot stoi, zostaje poprzedni kurs.
-        Koła leżą po obu stronach środka robota, prostopadle do kursu, ±WHEEL_TRACK_M/2.
-        Trasy kół przechodzą przez tę samą transformację co trasa robota (środek obrotu
-        = środek trasy robota), więc skalują się razem z nią.
+        Liczone wokół osi kół (self.robot_axle, jeśli dostępna) zamiast śladu listwy,
+        żeby tory kół odpowiadały rzeczywistej geometrii podwozia.
         """
-        n = len(self.robot)
-        if n < 2:
+        src_pts = self.robot_axle if len(self.robot_axle) >= 2 else self.robot
+        n = len(src_pts)
+        if n < 2 or not self.robot:
             return [], []
         half = WHEEL_TRACK_M / 2.0
         left, right = [], []
@@ -86,8 +104,8 @@ class CanvasView:
         src = []
         for i in range(n):
             idx = [min(max(i + d, 0), n - 1) for d in range(-k, k + 1)]
-            src.append((sum(self.robot[j][0] for j in idx) / len(idx),
-                        sum(self.robot[j][1] for j in idx) / len(idx)))
+            src.append((sum(src_pts[j][0] for j in idx) / len(idx),
+                        sum(src_pts[j][1] for j in idx) / len(idx)))
         for i, (x, y) in enumerate(src):
             a, b = src[max(i - 1, 0)], src[min(i + 1, n - 1)]
             dx, dy = b[0] - a[0], b[1] - a[1]

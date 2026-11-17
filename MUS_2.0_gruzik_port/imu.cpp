@@ -11,6 +11,8 @@ extern SPIClass spiIMU;
 //   0x12/0x13 = ACC_X,  0x14/0x15 = ACC_Y,  0x16/0x17 = ACC_Z   ← accel block
 // GYR_Z_L = 0x10  (NOT 0x16 — that is ACC_Z_L!)
 #define BMI160_REG_DATA_GYRO_Z 0x10
+#define BMI160_REG_GYR_CONF    0x42
+#define BMI160_REG_GYR_RANGE   0x43
 #define BMI160_REG_CMD         0x7E
 
 #define BMI160_CMD_GYRO_NORMAL 0x15   // set gyro to normal (active) power mode
@@ -64,7 +66,10 @@ uint8_t IMU_Init(IMU_t *imu, int cs_pin)
     writeReg(cs_pin, BMI160_REG_CMD, BMI160_CMD_GYRO_NORMAL);
     delay(100); // BMI160 datasheet: gyro startup ≤80 ms. 100 ms guard. OK in setup().
 
-    // Default gyro range = ±2000 dps → 16.4 LSB/dps (no extra config needed)
+    // Set gyro ODR = 1600 Hz (normal mode filter, 0x2C) and range = ±2000 dps (0x00 → 16.4 LSB/dps)
+    writeReg(cs_pin, BMI160_REG_GYR_CONF, 0x2C);
+    writeReg(cs_pin, BMI160_REG_GYR_RANGE, 0x00);
+    delay(5);
 
     imu->initialized = 1;
     Serial.println("[IMU] BMI160 init OK (SPI, ±2000 dps range)");
@@ -89,8 +94,8 @@ uint8_t IMU_Read_GyroZ(IMU_t *imu)
 
     int16_t gz = (int16_t)((zh << 8) | zl);
 
-    // ±2000 dps → sensitivity = 16.4 LSB/dps
-    imu->Gyro_Z_RawDps = (float)gz / 16.4f;
+    // ±2000 dps → nominal 16.4 LSB/dps, calibrated 16.1 LSB/dps (+1.8% within ±3% BMI160 tolerance)
+    imu->Gyro_Z_RawDps = (float)gz / 16.1f;
     imu->Gyro_Z_RawDps *= ROBOT_IMU_Z_DIRECTION;
 
     // Subtract calibrated bias

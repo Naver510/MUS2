@@ -137,6 +137,7 @@ void telemetryLog(const char* data) {
 void ControlLoopTask(void *parameter) {
     TickType_t xLastWakeTime = xTaskGetTickCount();
     const TickType_t xFrequency = pdMS_TO_TICKS(1); // 1 ms → 1 kHz
+    uint32_t lastOdometryUs = micros();
 
     while (true) {
         vTaskDelayUntil(&xLastWakeTime, xFrequency);
@@ -146,15 +147,13 @@ void ControlLoopTask(void *parameter) {
         enc2_count = Encoder2_GetCount();
 
         // --- IMU: read gyro-Z (non-blocking SPI burst) ---
-        // Only access SPI for IMU when actively driving or during calibration.
-        if (IMU.calibrating || GRUZIK.PowerMode == Start) {
-            // IMU is on its own dedicated SPI bus — no semaphore needed!
-            IMU_Read_GyroZ(&IMU);
-        }
+        // IMU is on its own dedicated SPI bus (HSPI), independent of SD — safe to read every tick.
+        IMU_Read_GyroZ(&IMU);
 
         // --- Non-blocking calibration: runs for first N ticks, then done ---
         if (IMU.calibrating) {
             IMU_CalibrateTick(&IMU);
+            lastOdometryUs = micros();
             // While calibrating keep motors stopped; skip state machine below
             Motor_L.set_speed = 0.0f;
             Motor_R.set_speed = 0.0f;
@@ -168,15 +167,25 @@ void ControlLoopTask(void *parameter) {
         Motor_CalculateSpeed(&Motor_L);
         Motor_CalculateSpeed(&Motor_R);
 
-        // --- Odometry: fused encoder + gyro-Z ---
+        // --- Odometry: fused encoder + gyro-Z (use measured dt_s, loop may exceed 1 ms) ---
+        uint32_t nowUs = micros();
+        float dt_s = (float)(nowUs - lastOdometryUs) * 1.0e-6f;
+        lastOdometryUs = nowUs;
+        if (dt_s <= 0.0f || dt_s > 0.05f) {
+            dt_s = ROBOT_CONTROL_DT_S;
+        }
+
         Odometry_Update(&Odometry,
                         Motor_L.DistanceInMeasurement,
                         Motor_R.DistanceInMeasurement,
                         IMU.Gyro_Z,
-                        ROBOT_CONTROL_DT_S);
+                        dt_s);
 
-        // --- Online gyro bias correction — active when robot is stationary ---
-        if (fabsf(Motor_L.DistanceInMeasurement) < ROBOT_ENCODER_STATIONARY_M &&
+        // --- Online gyro bias correction — active only when robot is actually stopped ---
+        // Do not run during PowerMode == Start: 140 CPR encoders produce 0 counts on most
+        // 1 kHz ticks at normal speed, which would pull bias toward turn direction.
+        if (GRUZIK.PowerMode != Start &&
+            fabsf(Motor_L.DistanceInMeasurement) < ROBOT_ENCODER_STATIONARY_M &&
             fabsf(Motor_R.DistanceInMeasurement) < ROBOT_ENCODER_STATIONARY_M &&
             fabsf(IMU.Gyro_Z) < ROBOT_GYRO_STATIONARY_DPS)
         {

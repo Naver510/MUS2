@@ -40,11 +40,11 @@ static float clampf(float value, float min_value, float max_value)
     return value;
 }
 
-// Maksymalna sensowna delta enkodera na jeden tik kontrolny, odpowiadajaca limitowi 3000 RPM
-// (ten sam limit, ktory wczesniej byl tylko dla RPM). Liczone w czasie kompilacji:
-// 3000 * 140 * 0.001 / 60 = 7 zliczen/tik.
+// Maksymalna sensowna delta enkodera na jeden obieg petli, odpowiadajaca limitowi 3000 RPM
+// z zapasem 2x na czas obiegu > 1 ms (14 zliczen/obieg zamiast 7). Liczone w czasie kompilacji:
+// 2 * 3000 * 140 * 0.001 / 60 = 14 zliczen/obieg.
 static constexpr int32_t MOTOR_MAX_ENCODER_DELTA =
-    (int32_t)(3000.0f * ROBOT_ENCODER_COUNTS_PER_WHEEL_REV * ROBOT_CONTROL_DT_S / 60.0f);
+    (int32_t)(2.0f * 3000.0f * ROBOT_ENCODER_COUNTS_PER_WHEEL_REV * ROBOT_CONTROL_DT_S / 60.0f);
 
 void Motor_CalculateSpeed(motor_t *motor)
 {

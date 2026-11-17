@@ -44,6 +44,9 @@ class App:
         self.wheel_var = tk.BooleanVar(value=False)
         tk.Checkbutton(side, text="Tory kół (rozstaw 140 mm)", variable=self.wheel_var,
                        command=self.toggle_wheels).pack(anchor="w", pady=4)
+        self.comp_var = tk.BooleanVar(value=True)
+        tk.Checkbutton(side, text="Kompensacja listwy (128 mm)", variable=self.comp_var,
+                       command=self.toggle_compensate).pack(anchor="w", pady=4)
         tk.Button(side, text="Analizuj (AI)", command=self.analyze).pack(fill="x", pady=4)
         tk.Label(side, text="Mysz: przeciągnij zieloną trasę,\nkółko = skala, [ ] = obrót",
                  justify="left", fg="#555").pack(anchor="w", pady=10)
@@ -100,18 +103,20 @@ class App:
         self.view.show_wheels = self.wheel_var.get()
         self.view.redraw()
 
+    def toggle_compensate(self):
+        self.view.set_compensate(self.comp_var.get())
+
     # ---------- pliki ----------
     def load_robot_path(self, path):
         try:
-            pts, speeds = file_io.parse_robot_file(path)
+            line_pts, axle_pts, speeds = file_io.parse_robot_file_full(path)
         except Exception as ex:
             messagebox.showerror("Błąd", str(ex))
             return
         self.last_robot_path = path
         self.last_dir = os.path.dirname(os.path.abspath(path))
         first = not self.view.robot
-        self.view.robot = pts
-        self.view.speeds = speeds
+        self.view.set_robot_data(line_pts, axle_pts, speeds)
         # przy odświeżeniu zachowujemy transformację i kamerę; fit tylko za pierwszym razem
         if first:
             self.view.request_fit()
@@ -156,7 +161,8 @@ class App:
         except Exception as ex:
             messagebox.showerror("Błąd", str(ex))
             return
-        self.view.robot, self.view.speeds, self.view.reference = robot, speeds, ref
+        self.view.set_robot_data(robot, [], speeds)
+        self.view.reference = ref
         self.view.t.update(t)
         self.sync_entries()
         self.view.request_fit()
